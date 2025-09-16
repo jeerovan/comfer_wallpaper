@@ -1,5 +1,7 @@
 import 'dart:io';
-
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -24,7 +26,7 @@ void main() async {
     await windowManager.show();
     await windowManager.focus();
   });
-
+  //windowManager.setPreventClose(true); // Prevents closing the app completely
   runApp(const MyApp());
 }
 
@@ -94,11 +96,17 @@ class _HomeScreenState extends State<HomeScreen>
     await trayManager.setContextMenu(
       Menu(
         items: [
+          MenuItem(
+              label: "Change Now", onClick: (menuItem) => _changeWallpaper()),
           MenuItem(label: "Show App", onClick: (menuItem) => _showWindow()),
           MenuItem(label: "Quit", onClick: (menuItem) => _exitApp()),
         ],
       ),
     );
+  }
+
+  void _changeWallpaper() {
+    runWallpaperScript();
   }
 
   void _showWindow() {
@@ -142,6 +150,77 @@ class _HomeScreenState extends State<HomeScreen>
       // You can show a snackbar or dialog if the URL fails to launch
       print('Could not launch $url');
     }
+  }
+
+  Future<void> runWallpaperScript() async {
+    try {
+      // Get the path to the executable script
+      final scriptPath = await getScriptPath();
+
+      String command;
+      List<String> args;
+
+      if (Platform.isWindows) {
+        command = 'powershell.exe';
+        args = ['-File', scriptPath];
+      } else if (Platform.isMacOS) {
+        command = 'zsh';
+        args = [scriptPath];
+      } else if (Platform.isLinux) {
+        command = 'bash';
+        args = [scriptPath];
+      } else {
+        return; // Unsupported platform
+      }
+
+      // Execute the process
+      final result = await Process.run(command, args);
+
+      if (result.exitCode == 0) {
+        print('Script executed successfully from: $scriptPath');
+        print(result.stdout);
+      } else {
+        print('Script failed with exit code: ${result.exitCode}');
+        print(result.stderr);
+      }
+    } catch (e) {
+      print('An error occurred while running the script: $e');
+    }
+  }
+
+  Future<String> getScriptPath() async {
+    String scriptAssetPath;
+    String scriptFileName;
+
+    if (Platform.isWindows) {
+      scriptAssetPath = 'assets/script.ps1';
+      scriptFileName = 'script.ps1';
+    } else if (Platform.isMacOS) {
+      scriptAssetPath = 'assets/script.zsh';
+      scriptFileName = 'script.zsh';
+    } else if (Platform.isLinux) {
+      scriptAssetPath = 'assets/script.sh';
+      scriptFileName = 'script.sh';
+    } else {
+      throw Exception('Unsupported platform');
+    }
+
+    // Get a temporary directory
+    final tempDir = await getTemporaryDirectory();
+    final scriptFile = File(path.join(tempDir.path, scriptFileName));
+
+    // Load the script from assets
+    final byteData = await rootBundle.load(scriptAssetPath);
+
+    // Write the script to the temporary file
+    await scriptFile.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
+
+    // On macOS and Linux, make the script executable
+    if (Platform.isMacOS || Platform.isLinux) {
+      await Process.run('chmod', ['+x', scriptFile.path]);
+    }
+
+    return scriptFile.path;
   }
 
   @override
@@ -205,7 +284,7 @@ class _HomeScreenState extends State<HomeScreen>
               // "Change now" button
               ElevatedButton(
                 onPressed: () async {
-                  print('Change Now button pressed!');
+                  runWallpaperScript();
                 },
                 style: ElevatedButton.styleFrom(
                   padding:
