@@ -40,7 +40,7 @@ class Downloader {
 
       if (Platform.isWindows) {
         command = 'powershell.exe';
-        args = ['-File', scriptPath];
+        args = ['-ExecutionPolicy', 'Bypass', '-File', scriptPath];
       } else if (Platform.isMacOS) {
         command = 'zsh';
         args = [scriptPath];
