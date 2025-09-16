@@ -72,14 +72,14 @@ class Downloader {
     String scriptFileName;
 
     if (Platform.isWindows) {
-      scriptAssetPath = 'assets/script.ps1';
-      scriptFileName = 'script.ps1';
+      scriptAssetPath = 'assets/windows.ps1';
+      scriptFileName = 'windows.ps1';
     } else if (Platform.isMacOS) {
-      scriptAssetPath = 'assets/script.zsh';
-      scriptFileName = 'script.zsh';
+      scriptAssetPath = 'assets/osx.sh';
+      scriptFileName = 'osx.sh';
     } else if (Platform.isLinux) {
-      scriptAssetPath = 'assets/script.sh';
-      scriptFileName = 'script.sh';
+      scriptAssetPath = 'assets/debian.sh';
+      scriptFileName = 'debian.sh';
     } else {
       throw Exception('Unsupported platform');
     }
