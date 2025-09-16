@@ -1,9 +1,7 @@
 import 'dart:io';
-import 'package:flutter/services.dart' show rootBundle;
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
+import 'package:comfer_wallpaper/downloader.dart';
+import 'package:comfer_wallpaper/service_logger.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
@@ -18,6 +16,7 @@ void main() async {
     size: Size(480, 512),
     minimumSize: Size(480, 512),
     center: true,
+    title: "Comfer Wallpaper",
     //backgroundColor: Colors.transparent,
     //skipTaskbar: false,
     //titleBarStyle: TitleBarStyle.hidden,
@@ -26,7 +25,10 @@ void main() async {
     await windowManager.show();
     await windowManager.focus();
   });
-  //windowManager.setPreventClose(true); // Prevents closing the app completely
+  // TODO Add setting for this
+  windowManager.setPreventClose(true); // Prevents closing the app completely
+  // Start downloader timer
+  Downloader().startTimer();
   runApp(const MyApp());
 }
 
@@ -63,12 +65,11 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with WindowListener, TrayListener {
-  String _selectedInterval = 'Hourly'; // Default value
+  final AppLogger logger = AppLogger(prefixes: ["Home"]);
 
   @override
   void initState() {
     super.initState();
-    _loadInterval();
     _initTray();
     windowManager.addListener(this);
   }
@@ -106,7 +107,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _changeWallpaper() {
-    runWallpaperScript();
+    Downloader().runWallpaperScript();
   }
 
   void _showWindow() {
@@ -124,107 +125,18 @@ class _HomeScreenState extends State<HomeScreen>
     trayManager.popUpContextMenu();
   }
 
-  // Load the saved interval from local storage.
-  Future<void> _loadInterval() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      // Get the saved value, or default to 'Hourly' if nothing is stored.
-      _selectedInterval = prefs.getString('wallpaper_interval') ?? 'Hourly';
-    });
-  }
-
-  // Save the selected interval to local storage.
-  Future<void> _saveInterval(String? newValue) async {
-    if (newValue == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('wallpaper_interval', newValue);
-    setState(() {
-      _selectedInterval = newValue;
-    });
-  }
-
   // Function to launch the website URL.
   void _launchURL() async {
     final Uri url = Uri.parse('https://comfer.jeerovan.com');
     if (!await launchUrl(url)) {
       // You can show a snackbar or dialog if the URL fails to launch
-      print('Could not launch $url');
+      logger.error('Could not launch $url');
     }
-  }
-
-  Future<void> runWallpaperScript() async {
-    try {
-      // Get the path to the executable script
-      final scriptPath = await getScriptPath();
-
-      String command;
-      List<String> args;
-
-      if (Platform.isWindows) {
-        command = 'powershell.exe';
-        args = ['-File', scriptPath];
-      } else if (Platform.isMacOS) {
-        command = 'zsh';
-        args = [scriptPath];
-      } else if (Platform.isLinux) {
-        command = 'bash';
-        args = [scriptPath];
-      } else {
-        return; // Unsupported platform
-      }
-
-      // Execute the process
-      final result = await Process.run(command, args);
-
-      if (result.exitCode == 0) {
-        print('Script executed successfully from: $scriptPath');
-        print(result.stdout);
-      } else {
-        print('Script failed with exit code: ${result.exitCode}');
-        print(result.stderr);
-      }
-    } catch (e) {
-      print('An error occurred while running the script: $e');
-    }
-  }
-
-  Future<String> getScriptPath() async {
-    String scriptAssetPath;
-    String scriptFileName;
-
-    if (Platform.isWindows) {
-      scriptAssetPath = 'assets/script.ps1';
-      scriptFileName = 'script.ps1';
-    } else if (Platform.isMacOS) {
-      scriptAssetPath = 'assets/script.zsh';
-      scriptFileName = 'script.zsh';
-    } else if (Platform.isLinux) {
-      scriptAssetPath = 'assets/script.sh';
-      scriptFileName = 'script.sh';
-    } else {
-      throw Exception('Unsupported platform');
-    }
-
-    // Get a temporary directory
-    final tempDir = await getTemporaryDirectory();
-    final scriptFile = File(path.join(tempDir.path, scriptFileName));
-
-    // Load the script from assets
-    final byteData = await rootBundle.load(scriptAssetPath);
-
-    // Write the script to the temporary file
-    await scriptFile.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
-
-    // On macOS and Linux, make the script executable
-    if (Platform.isMacOS || Platform.isLinux) {
-      await Process.run('chmod', ['+x', scriptFile.path]);
-    }
-
-    return scriptFile.path;
   }
 
   @override
   void dispose() {
+    Downloader().stopTimer();
     trayManager.removeListener(this);
     windowManager.removeListener(this);
     super.dispose();
@@ -260,31 +172,10 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               const SizedBox(height: 48.0),
 
-              // Interval selection dropdown
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text('Interval:', style: TextStyle(fontSize: 16.0)),
-                  const SizedBox(width: 20),
-                  DropdownButton<String>(
-                    value: _selectedInterval,
-                    onChanged: _saveInterval,
-                    items: <String>['Hourly', 'Daily']
-                        .map<DropdownMenuItem<String>>((String value) {
-                      return DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 32.0),
-
               // "Change now" button
               ElevatedButton(
-                onPressed: () async {
-                  runWallpaperScript();
+                onPressed: () {
+                  Downloader().runWallpaperScript();
                 },
                 style: ElevatedButton.styleFrom(
                   padding:
