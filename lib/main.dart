@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   // Ensure Flutter bindings are initialized before using plugins.
@@ -25,8 +26,7 @@ void main() async {
     await windowManager.show();
     await windowManager.focus();
   });
-  // TODO Add setting for this
-  windowManager.setPreventClose(true); // Prevents closing the app completely
+  //windowManager.setPreventClose(true); // Prevents closing the app completely
   // Start downloader timer
   Downloader().startTimer();
   runApp(const MyApp());
@@ -66,10 +66,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with WindowListener, TrayListener {
   final AppLogger logger = AppLogger(prefixes: ["Home"]);
+  bool _hideOnClose = false;
 
   @override
   void initState() {
     super.initState();
+    _loadHideOnClose();
     _initTray();
     windowManager.addListener(this);
   }
@@ -82,6 +84,25 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void onTrayIconMouseDown() {
     _showWindow();
+  }
+
+  Future<void> _loadHideOnClose() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      // Get the saved value, or default to 'Hourly' if nothing is stored.
+      _hideOnClose = prefs.getBool('hide_on_close') ?? false;
+    });
+    windowManager.setPreventClose(_hideOnClose);
+  }
+
+  Future<void> _saveHideOnClose(bool? newValue) async {
+    if (newValue == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hide_on_close', newValue);
+    setState(() {
+      _hideOnClose = newValue;
+      windowManager.setPreventClose(newValue);
+    });
   }
 
   Future<void> _initTray() async {
@@ -171,6 +192,20 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               const SizedBox(height: 48.0),
+              Center(
+                child: ListTile(
+                  leading: const Icon(Icons.close, color: Colors.grey),
+                  title: const Text("Hide on close"),
+                  subtitle: const Text("If you see icon in system tray"),
+                  trailing: Transform.scale(
+                    scale: 0.7,
+                    child: Switch(
+                        value: _hideOnClose, onChanged: _saveHideOnClose),
+                  ),
+                  horizontalTitleGap: 16.0,
+                ),
+              ),
+              const SizedBox(height: 32.0),
 
               // "Change now" button
               ElevatedButton(
