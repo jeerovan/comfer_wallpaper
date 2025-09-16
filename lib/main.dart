@@ -26,11 +26,14 @@ void main() async {
     await windowManager.show();
     await windowManager.focus();
   });
-  //windowManager.setPreventClose(true); // Prevents closing the app completely
+  if(!Platform.isLinux){
+     windowManager.setPreventClose(true); // Prevents closing the app completely
+  }
   // Start downloader timer
   Downloader().startTimer();
   runApp(const MyApp());
 }
+
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -192,6 +195,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               const SizedBox(height: 48.0),
+              if(Platform.isLinux)
               Center(
                 child: ListTile(
                   leading: const Icon(Icons.close, color: Colors.grey),

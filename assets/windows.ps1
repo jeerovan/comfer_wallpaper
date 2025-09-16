@@ -1,5 +1,5 @@
 # Configuration
-$apiUrl = "https://comfer.jeerovan.com/api?view=landscape&name=jeerovan&hour=$(Get-Date -Format HH)" # Change to your API URL
+$apiUrl = "https://comfer.jeerovan.com/api?view=landscape&name=$env:USERPROFILE&hour=$(Get-Date -Format HH)" # Change to your API URL
 $wallpaperDir = "$env:USERPROFILE\Pictures\Wallpapers"
 if (-Not (Test-Path $wallpaperDir)) {
   New-Item -ItemType Directory -Path $wallpaperDir | Out-Null

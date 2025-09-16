@@ -1,31 +1,30 @@
-#!/bin/bash
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-# --- Configuration ---
-TARGET_USER=$(whoami) # current logged-in user
-API_URL="https://comfer.jeerovan.com/api?view=landscape&name=jeerovan&hour=$(date +%H)" # change to your API URL
-
+TARGET_USER=$(whoami)
+API_URL="https://comfer.jeerovan.com/api?view=landscape&name=$TARGET_USER&hour=$(date +%H)"
 WALLPAPER_DIR="/Users/$TARGET_USER/Pictures/Wallpapers"
 mkdir -p "$WALLPAPER_DIR"
 
-# Fetch JSON response from API
 API_RESPONSE=$(curl -s "$API_URL")
-
-# Extract imageUrl from JSON using /usr/bin/plutil (macOS built-in tool for JSON)
 IMAGE_URL=$(echo "$API_RESPONSE" | /usr/bin/plutil -extract imageUrl raw -o - -)
-
-# Validate IMAGE_URL
 if [[ -z "$IMAGE_URL" || "$IMAGE_URL" == "null" ]]; then
-  echo "Failed to fetch imageUrl from API response."
+  echo "Failed to fetch imageUrl from API."
   exit 1
 fi
 
-# Download image (use timestamp for filename)
 IMAGE_NAME=$(date +%s).jpg
 IMAGE_PATH="$WALLPAPER_DIR/$IMAGE_NAME"
 curl -s -L "$IMAGE_URL" -o "$IMAGE_PATH"
+if [[ ! -f "$IMAGE_PATH" || ! -s "$IMAGE_PATH" ]]; then
+  echo "Failed to download image: $IMAGE_URL"
+  exit 2
+fi
 
-# Set desktop wallpaper using AppleScript (for the current user)
 osascript -e "tell application \"System Events\" to set picture of every desktop to \"$IMAGE_PATH\""
+if [[ $? -ne 0 ]]; then
+  echo "Failed to update wallpaper using osascript."
+  exit 3
+fi
 
-echo "Wallpaper set to $IMAGE_PATH"
+echo "Wallpaper set successfully: $IMAGE_PATH"
 exit 0
