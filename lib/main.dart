@@ -26,7 +26,7 @@ void main() async {
     await windowManager.show();
     await windowManager.focus();
   });
-  if(!Platform.isLinux){
+  if(Platform.isWindows){
      windowManager.setPreventClose(true); // Prevents closing the app completely
   }
   // Start downloader timer
