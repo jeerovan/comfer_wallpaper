@@ -1,22 +1,19 @@
 #!/bin/zsh
 
 TARGET_USER=$(whoami)
-API_URL="https://comfer.jeerovan.com/api?view=landscape&name=$TARGET_USER&hour=$(date +%H)"
-WALLPAPER_DIR="/Users/$TARGET_USER/Pictures/Wallpapers"
-mkdir -p "$WALLPAPER_DIR"
+WALLPAPER_DIR="/Users/$TARGET_USER/Downloads"
+FILENAME_FILE="$WALLPAPER_DIR/wallpaper_file_name.txt"
 
-API_RESPONSE=$(curl -s "$API_URL")
-IMAGE_URL=$(echo "$API_RESPONSE" | /usr/bin/plutil -extract imageUrl raw -o - -)
-if [[ -z "$IMAGE_URL" || "$IMAGE_URL" == "null" ]]; then
-  echo "Failed to fetch imageUrl from API."
+if [[ ! -f "$FILENAME_FILE" ]]; then
+  echo "Wallpaper filename file does not exist: $FILENAME_FILE"
   exit 1
 fi
 
-IMAGE_NAME=$(date +%s).jpg
+IMAGE_NAME=$(cat "$FILENAME_FILE")
 IMAGE_PATH="$WALLPAPER_DIR/$IMAGE_NAME"
-curl -s -L "$IMAGE_URL" -o "$IMAGE_PATH"
-if [[ ! -f "$IMAGE_PATH" || ! -s "$IMAGE_PATH" ]]; then
-  echo "Failed to download image: $IMAGE_URL"
+
+if [[ ! -f "$IMAGE_PATH" ]]; then
+  echo "Wallpaper image file does not exist: $IMAGE_PATH"
   exit 2
 fi
 

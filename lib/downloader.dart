@@ -6,6 +6,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:comfer_wallpaper/service_logger.dart';
 
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+
 class Downloader {
   // Singleton setup
   static final Downloader _instance = Downloader._internal();
@@ -19,10 +23,12 @@ class Downloader {
   ]);
 
   void startTimer() {
+    //oneshot on start
+    downloadAndSetWallpaper();
     // Starts the interval sync
     _downloadTimer?.cancel();
     _downloadTimer = Timer.periodic(Duration(hours: 1), (timer) {
-      runWallpaperScript();
+      downloadAndSetWallpaper();
     });
   }
 
@@ -30,6 +36,72 @@ class Downloader {
     _downloadTimer?.cancel();
     _downloadTimer = null;
   }
+
+  Future<void> downloadAndSetWallpaper() async {
+    await downloadWallpaperFromApi();
+    runWallpaperScript();
+  }
+
+  Future<void> downloadWallpaperFromApi() async {
+  final prefs = await SharedPreferences.getInstance();
+  final userId = prefs.getString("user_id");
+  if (userId == null || userId.isEmpty) {
+    logger.error("user_id not found in preferences.");
+    return;
+  }
+
+  // Get downloads directory
+  Directory? downloadsDir = await getDownloadsDirectory();
+  if (downloadsDir == null) {
+    logger.error(" Could not get downloads directory.");
+    return;
+  }
+
+  // Construct API URL
+  final now = DateTime.now().toUtc();
+  final hour = now.hour.toString().padLeft(2, '0');
+  final apiUrl =
+      "https://comfer.jeerovan.com/api?view=landscape&name=$userId&hour=$hour";
+
+  try {
+    final response = await http.get(Uri.parse(apiUrl));
+    if (response.statusCode != 200) {
+      logger.error("API request failed with code: ${response.statusCode}");
+      return;
+    }
+
+    final jsonResponse = json.decode(response.body);
+    final imageUrl = jsonResponse['imageUrl'];
+    if (imageUrl == null || imageUrl == 'null' || imageUrl.isEmpty) {
+      logger.error("Failed to fetch imageUrl from API response.");
+      return;
+    }
+
+    final utcSeconds = now.millisecondsSinceEpoch ~/ 1000;
+    final imageName = "$utcSeconds.jpg";
+    final imagePath = downloadsDir.path + Platform.pathSeparator + imageName;
+
+    // Download wallpaper image
+    final imageResponse = await http.get(Uri.parse(imageUrl));
+    if (imageResponse.statusCode != 200 || imageResponse.bodyBytes.isEmpty) {
+      logger.error("Failed to download image: $imageUrl");
+      return;
+    }
+
+    // Save wallpaper to file
+    final imageFile = File(imagePath);
+    await imageFile.writeAsBytes(imageResponse.bodyBytes, flush: true);
+
+    // Update wallpaper_file_name.txt
+    final txtFilePath =
+        '${downloadsDir.path}${Platform.pathSeparator}wallpaper_file_name.txt';
+    final txtFile = File(txtFilePath);
+    await txtFile.writeAsString(imageName, flush: true);
+
+  } catch (e,s) {
+    logger.error("Error occurred",error: e,stackTrace: s);
+  }
+}
 
   Future<void> runWallpaperScript() async {
     try {

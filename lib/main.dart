@@ -31,8 +31,7 @@ void main() async {
   if(Platform.isWindows){
      windowManager.setPreventClose(true); // Prevents closing the app completely
   }
-  // Start downloader timer
-  Downloader().startTimer();
+  
   runApp(const MyApp());
 }
 
@@ -80,9 +79,14 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+    checkSetUserId();
     _loadHideOnClose();
     _initTray();
     windowManager.addListener(this);
+    // Start downloader timer
+    Timer(Duration(seconds: 5), () {
+      Downloader().startTimer();
+    });
   }
 
   @override
@@ -168,7 +172,7 @@ class _HomeScreenState extends State<HomeScreen>
         _remainingSeconds = 0;
       });
     });
-    Downloader().runWallpaperScript();
+    Downloader().downloadAndSetWallpaper();
   }
 
   void _showWindow() {
