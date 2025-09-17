@@ -1,24 +1,22 @@
 # Configuration
-$apiUrl = "https://comfer.jeerovan.com/api?view=landscape&name=$env:USERPROFILE&hour=$(Get-Date -Format HH)" # Change to your API URL
-$wallpaperDir = "$env:USERPROFILE\Pictures\Wallpapers"
-if (-Not (Test-Path $wallpaperDir)) {
-  New-Item -ItemType Directory -Path $wallpaperDir | Out-Null
-}
+$downloadsDir = [Environment]::GetFolderPath("UserProfile") + "\Downloads"
+$wallpaperFileNamePath = Join-Path $downloadsDir "wallpaper_file_name.txt"
 
-# Fetch JSON response from API
-$response = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing
-
-# Extract imageUrl
-$imageUrl = $response.imageUrl
-if ([string]::IsNullOrEmpty($imageUrl)) {
-  Write-Error "Failed to fetch imageUrl from API response."
+if (-Not (Test-Path $wallpaperFileNamePath)) {
+  Write-Error "wallpaper_file_name.txt not found in Downloads directory."
   exit 1
 }
 
-# Download image
-$fileName = "$(Get-Date -UFormat %s).jpg"
-$filePath = Join-Path $wallpaperDir $fileName
-Invoke-WebRequest -Uri $imageUrl -OutFile $filePath -UseBasicParsing
+# Read the current wallpaper file name from the text file
+$wallpaperFileName = Get-Content $wallpaperFileNamePath -ErrorAction Stop
+
+# Construct the full file path to the wallpaper image
+$filePath = Join-Path $downloadsDir $wallpaperFileName
+
+if (-Not (Test-Path $filePath)) {
+  Write-Error "Wallpaper image file not found: $filePath"
+  exit 1
+}
 
 # Set wallpaper using Windows API through COM object
 Add-Type @"

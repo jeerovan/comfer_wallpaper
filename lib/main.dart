@@ -27,14 +27,13 @@ void main() async {
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();
     await windowManager.focus();
+    if (Platform.isWindows) {
+      await windowManager
+          .setPreventClose(true); // Prevents closing the app completely
+    }
   });
-  if(Platform.isWindows){
-     windowManager.setPreventClose(true); // Prevents closing the app completely
-  }
-  
   runApp(const MyApp());
 }
-
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -100,7 +99,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> checkSetUserId() async {
-     final prefs = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
     String? userId = prefs.getString("user_id");
     if (userId == null) {
       String uuid = Uuid().v4(); // Generates a random UUID (v4)
@@ -238,20 +237,20 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               const SizedBox(height: 48.0),
-              if(Platform.isLinux)
-              Center(
-                child: ListTile(
-                  leading: const Icon(Icons.close, color: Colors.grey),
-                  title: const Text("Hide on close"),
-                  subtitle: const Text("If you see icon in system tray"),
-                  trailing: Transform.scale(
-                    scale: 0.7,
-                    child: Switch(
-                        value: _hideOnClose, onChanged: _saveHideOnClose),
+              if (Platform.isLinux)
+                Center(
+                  child: ListTile(
+                    leading: const Icon(Icons.close, color: Colors.grey),
+                    title: const Text("Hide on close"),
+                    subtitle: const Text("If you see icon in system tray"),
+                    trailing: Transform.scale(
+                      scale: 0.7,
+                      child: Switch(
+                          value: _hideOnClose, onChanged: _saveHideOnClose),
+                    ),
+                    horizontalTitleGap: 16.0,
                   ),
-                  horizontalTitleGap: 16.0,
                 ),
-              ),
               const SizedBox(height: 32.0),
 
               // "Change now" button
@@ -262,9 +261,9 @@ class _HomeScreenState extends State<HomeScreen>
                       const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
                   textStyle: const TextStyle(fontSize: 16),
                 ),
-                child:Text(_canChange
-                  ? 'Change Now'
-                  : 'Try again in $_remainingSeconds s'),
+                child: Text(_canChange
+                    ? 'Change Now'
+                    : 'Try again in $_remainingSeconds s'),
               ),
 
               // Use a Spacer to push the footer to the bottom.
