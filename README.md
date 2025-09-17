@@ -3,7 +3,7 @@
 
 ---
 
-### Setup
+### Setup from releases
 
 
   -   **Linux**:
@@ -21,6 +21,12 @@
       1.  Unzip the ComferWindows.zip and run the application
       2.  Closing the app will hide it
       3.  Use system tray to show the app or quit.
+---
+
+### Build locally
+
+  - This is a Flutter project. You may find all the details in [**Flutter Documentation**](https://docs.flutter.dev/)
+
 ---
 
 ### License
