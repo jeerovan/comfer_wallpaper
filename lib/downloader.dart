@@ -13,6 +13,7 @@ class Downloader {
   Downloader._internal();
 
   Timer? _downloadTimer;
+  bool settingWallpaper = false;
   static final logger = AppLogger(prefixes: [
     "downloader",
   ]);

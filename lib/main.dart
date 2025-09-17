@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:comfer_wallpaper/downloader.dart';
 import 'package:comfer_wallpaper/service_logger.dart';
@@ -6,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 void main() async {
   // Ensure Flutter bindings are initialized before using plugins.
@@ -70,6 +72,10 @@ class _HomeScreenState extends State<HomeScreen>
     with WindowListener, TrayListener {
   final AppLogger logger = AppLogger(prefixes: ["Home"]);
   bool _hideOnClose = false;
+  bool _canChange = true;
+  Timer? _changeTimer;
+  Timer? _countdownTimer;
+  int _remainingSeconds = 0;
 
   @override
   void initState() {
@@ -89,10 +95,18 @@ class _HomeScreenState extends State<HomeScreen>
     _showWindow();
   }
 
+  Future<void> checkSetUserId() async {
+     final prefs = await SharedPreferences.getInstance();
+    String? userId = prefs.getString("user_id");
+    if (userId == null) {
+      String uuid = Uuid().v4(); // Generates a random UUID (v4)
+      await prefs.setString("user_id", uuid);
+    }
+  }
+
   Future<void> _loadHideOnClose() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      // Get the saved value, or default to 'Hourly' if nothing is stored.
       _hideOnClose = prefs.getBool('hide_on_close') ?? false;
     });
     windowManager.setPreventClose(_hideOnClose);
@@ -121,8 +135,6 @@ class _HomeScreenState extends State<HomeScreen>
     await trayManager.setContextMenu(
       Menu(
         items: [
-          MenuItem(
-              label: "Change Now", onClick: (menuItem) => _changeWallpaper()),
           MenuItem(label: "Show App", onClick: (menuItem) => _showWindow()),
           MenuItem(label: "Quit", onClick: (menuItem) => _exitApp()),
         ],
@@ -131,6 +143,31 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _changeWallpaper() {
+    if (!_canChange) return;
+
+    _canChange = false;
+    _remainingSeconds = 60;
+
+    // Start a periodic timer to count down the seconds
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(Duration(seconds: 1), (timer) {
+      if (_remainingSeconds > 0) {
+        setState(() {
+          _remainingSeconds--;
+        });
+      } else {
+        timer.cancel();
+      }
+    });
+
+    // Start the overall timer for timeout (re-enables button after 60s)
+    _changeTimer?.cancel();
+    _changeTimer = Timer(Duration(seconds: 60), () {
+      setState(() {
+        _canChange = true;
+        _remainingSeconds = 0;
+      });
+    });
     Downloader().runWallpaperScript();
   }
 
@@ -161,6 +198,8 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     Downloader().stopTimer();
+    _changeTimer?.cancel();
+    _countdownTimer?.cancel();
     trayManager.removeListener(this);
     windowManager.removeListener(this);
     super.dispose();
@@ -213,15 +252,15 @@ class _HomeScreenState extends State<HomeScreen>
 
               // "Change now" button
               ElevatedButton(
-                onPressed: () {
-                  Downloader().runWallpaperScript();
-                },
+                onPressed: _canChange ? _changeWallpaper : null,
                 style: ElevatedButton.styleFrom(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
                   textStyle: const TextStyle(fontSize: 16),
                 ),
-                child: const Text('Change Now'),
+                child:Text(_canChange
+                  ? 'Change Now'
+                  : 'Try again in $_remainingSeconds s'),
               ),
 
               // Use a Spacer to push the footer to the bottom.

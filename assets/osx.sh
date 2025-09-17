@@ -1,4 +1,4 @@
-export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+#!/bin/zsh
 
 TARGET_USER=$(whoami)
 API_URL="https://comfer.jeerovan.com/api?view=landscape&name=$TARGET_USER&hour=$(date +%H)"
