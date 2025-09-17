@@ -4,6 +4,7 @@ import FlutterMacOS
 @main
 class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   var mainWindow: NSWindow?  // Keep a reference to main window
+  private var methodChannel: FlutterMethodChannel?
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
     super.applicationDidFinishLaunching(notification)
@@ -11,8 +12,9 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     // Capture main window pointer
     if let window = NSApplication.shared.windows.first {
       mainWindow = window
-      mainWindow?.delegate = self  // Set self as delegate to intercept close
+      mainWindow?.delegate = self
     }
+  
   }
 
   // Intercept window close on macOS, hide instead of close

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show rootBundle, MethodChannel, PlatformException;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:comfer_wallpaper/service_logger.dart';
@@ -15,6 +15,7 @@ class Downloader {
   static final Downloader _instance = Downloader._internal();
   factory Downloader() => _instance;
   Downloader._internal();
+  final platform = MethodChannel('comfer.jeerovan.com/wallpaper');
 
   Timer? _downloadTimer;
   bool settingWallpaper = false;
@@ -39,69 +40,84 @@ class Downloader {
 
   Future<void> downloadAndSetWallpaper() async {
     await downloadWallpaperFromApi();
-    runWallpaperScript();
+    if(Platform.isLinux || Platform.isWindows){
+      runWallpaperScript();
+    }
   }
 
   Future<void> downloadWallpaperFromApi() async {
-  final prefs = await SharedPreferences.getInstance();
-  final userId = prefs.getString("user_id");
-  if (userId == null || userId.isEmpty) {
-    logger.error("user_id not found in preferences.");
-    return;
-  }
-
-  // Get downloads directory
-  Directory? downloadsDir = await getDownloadsDirectory();
-  if (downloadsDir == null) {
-    logger.error(" Could not get downloads directory.");
-    return;
-  }
-
-  // Construct API URL
-  final now = DateTime.now().toUtc();
-  final hour = now.hour.toString().padLeft(2, '0');
-  final apiUrl =
-      "https://comfer.jeerovan.com/api?view=landscape&name=$userId&hour=$hour";
-
-  try {
-    final response = await http.get(Uri.parse(apiUrl));
-    if (response.statusCode != 200) {
-      logger.error("API request failed with code: ${response.statusCode}");
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString("user_id");
+    if (userId == null || userId.isEmpty) {
+      logger.error("user_id not found in preferences.");
       return;
     }
 
-    final jsonResponse = json.decode(response.body);
-    final imageUrl = jsonResponse['imageUrl'];
-    if (imageUrl == null || imageUrl == 'null' || imageUrl.isEmpty) {
-      logger.error("Failed to fetch imageUrl from API response.");
+    // Get downloads directory
+    Directory? downloadsDir = await getDownloadsDirectory();
+    if (downloadsDir == null) {
+      logger.error(" Could not get downloads directory.");
       return;
     }
 
-    final utcSeconds = now.millisecondsSinceEpoch ~/ 1000;
-    final imageName = "$utcSeconds.jpg";
-    final imagePath = downloadsDir.path + Platform.pathSeparator + imageName;
+    // Construct API URL
+    final now = DateTime.now().toUtc();
+    final hour = now.hour.toString().padLeft(2, '0');
+    final apiUrl =
+        "https://comfer.jeerovan.com/api?view=landscape&name=$userId&hour=$hour";
 
-    // Download wallpaper image
-    final imageResponse = await http.get(Uri.parse(imageUrl));
-    if (imageResponse.statusCode != 200 || imageResponse.bodyBytes.isEmpty) {
-      logger.error("Failed to download image: $imageUrl");
-      return;
+    try {
+      final response = await http.get(Uri.parse(apiUrl));
+      if (response.statusCode != 200) {
+        logger.error("API request failed with code: ${response.statusCode}");
+        return;
+      }
+
+      final jsonResponse = json.decode(response.body);
+      final imageUrl = jsonResponse['imageUrl'];
+      if (imageUrl == null || imageUrl == 'null' || imageUrl.isEmpty) {
+        logger.error("Failed to fetch imageUrl from API response.");
+        return;
+      }
+
+      final utcSeconds = now.millisecondsSinceEpoch ~/ 1000;
+      final imageName = "$utcSeconds.jpg";
+      final imagePath = downloadsDir.path + Platform.pathSeparator + imageName;
+
+      // Download wallpaper image
+      final imageResponse = await http.get(Uri.parse(imageUrl));
+      if (imageResponse.statusCode != 200 || imageResponse.bodyBytes.isEmpty) {
+        logger.error("Failed to download image: $imageUrl");
+        return;
+      }
+
+      // Save wallpaper to file
+      final imageFile = File(imagePath);
+      await imageFile.writeAsBytes(imageResponse.bodyBytes, flush: true);
+
+      if(Platform.isMacOS){
+        setWallpaperMacOS(imagePath);
+      } else {
+        // Update wallpaper_file_name.txt
+        final txtFilePath =
+            '${downloadsDir.path}${Platform.pathSeparator}wallpaper_file_name.txt';
+        final txtFile = File(txtFilePath);
+        await txtFile.writeAsString(imageName, flush: true);
+      }
+    } catch (e,s) {
+      logger.error("Error occurred",error: e,stackTrace: s);
     }
-
-    // Save wallpaper to file
-    final imageFile = File(imagePath);
-    await imageFile.writeAsBytes(imageResponse.bodyBytes, flush: true);
-
-    // Update wallpaper_file_name.txt
-    final txtFilePath =
-        '${downloadsDir.path}${Platform.pathSeparator}wallpaper_file_name.txt';
-    final txtFile = File(txtFilePath);
-    await txtFile.writeAsString(imageName, flush: true);
-
-  } catch (e,s) {
-    logger.error("Error occurred",error: e,stackTrace: s);
   }
-}
+
+  Future<bool> setWallpaperMacOS(String imagePath) async {
+    try {
+      final bool result = await platform.invokeMethod('setWallpaper', {'path': imagePath});
+      return result;
+    } on PlatformException catch (e) {
+      logger.error("Failed to set wallpaper: '${e.message}'.");
+      return false;
+    }
+  }
 
   Future<void> runWallpaperScript() async {
     try {
