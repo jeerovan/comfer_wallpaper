@@ -2,9 +2,11 @@
 
 A background desktop wallpaper app with three status-bar controls: **Change now**, **Frequency → Hourly / Daily**, and **Quit**. Hourly is the default. Wallpapers come from the existing Comfer API.
 
+Build and packaging instructions, dependencies, icon requirements, platform restrictions, validation results, and Ubuntu troubleshooting are in **[Release.md](Release.md)**.
+
 ## Behavior
 
-- Starts in the signed-in user's desktop session when login startup is enabled. After first-launch setup, no normal window is shown on macOS or Windows when tray initialization succeeds.
+- Starts in the signed-in user's desktop session when login startup is enabled. After first-launch setup, no normal window is shown when the tray and desktop integration are usable.
 - Keeps one managed wallpaper after a successful replacement and cleanup. The previous image remains available until the replacement is validated and confirmed by the desktop.
 - Stores images and a recovery journal in the app's application-support directory, rather than Downloads. Unknown files and legacy Downloads images are never automatically deleted.
 - Persists Hourly/Daily across restarts. Daily means 24 hours after the last successful change. A manual change resets the interval.
@@ -14,144 +16,15 @@ A background desktop wallpaper app with three status-bar controls: **Change now*
 
 A temporary image and previous image may coexist during replacement or recovery. Cleanup failures block further downloads until resolved, preventing unbounded accumulation. A file still reported as being used on another display is retained for safety.
 
-## macOS installation (macOS 13+)
+## Desktop use
 
-For a downloaded release, open the DMG, drag **Comfer Wallpaper** into **Applications**, and open the installed app. Version **0.2.0 (build 2)** offers **Start at login** or **Not now** on first launch. If macOS requires approval, the setup provides **Open System Settings** and **Check again**. Once you choose, setup will not prompt again or override a later change in System Settings. Existing installations with startup already enabled skip setup.
+Comfer runs in the signed-in user's graphical session; it is not a machine-level service.
 
-Opening an uninstalled copy shows instructions to move it into Applications first. Close that copy and launch the installed app to continue. Closing an unfinished setup quits Comfer; the choice remains available next launch. No Terminal command is needed for drag-and-drop installation.
+- **macOS:** open the installed app from Applications. First-launch setup offers **Start at login** or **Not now**; macOS may require approval in Login Items.
+- **Linux:** the wallpaper adapter targets GNOME. First launch offers login startup from a stable installed path. Missing tray support or an unsupported desktop keeps a control window visible with an explanation. KDE is not currently supported.
+- **Windows:** the existing per-user installation helper registers login startup. Native Windows validation remains outstanding.
 
-Build with Flutter, Xcode, and CocoaPods installed:
-
-```sh
-flutter pub get
-flutter build macos --release
-bash packaging/macos/install.sh
-```
-
-The installer copies the application to `~/Applications/Comfer Wallpaper.app`, registers it with `SMAppService`, and starts it. Pass a built `.app` and optional installation directory as arguments to install elsewhere. Quit the existing instance before an upgrade. Normal launches never re-enable startup if you disabled it in System Settings.
-
-If macOS says approval is required, open **System Settings → General → Login Items & Extensions** and enable Comfer. Startup registration is per user and requires no root service. The current release uses the primary screen/current desktop; other displays and Spaces are not synchronized.
-
-To inspect or change registration explicitly:
-
-```sh
-"$HOME/Applications/Comfer Wallpaper.app/Contents/MacOS/Comfer Wallpaper" --startup-status
-"$HOME/Applications/Comfer Wallpaper.app/Contents/MacOS/Comfer Wallpaper" --disable-startup
-"$HOME/Applications/Comfer Wallpaper.app/Contents/MacOS/Comfer Wallpaper" --enable-startup
-```
-
-Status values follow Apple's API: 0 not registered, 1 enabled, 2 requires approval, 3 not found. After Quit, launching the executable with `--change-now` requests an immediate change; `--show` opens the fallback controls. The login startup commands do not start Flutter or download images.
-
-Uninstall after choosing Quit:
-
-```sh
-bash packaging/macos/uninstall.sh
-```
-
-Uninstall preserves application data so the desktop never points to a deleted wallpaper. A distributable release still needs the publisher's normal signing/notarization process; building locally is not notarization.
-
-## Windows and Linux
-
-Windows native validation remains outstanding. Linux validation on the detected GNOME machine is recorded below.
-
-**Windows:** build with `flutter build windows --release`; run `packaging/windows/install.ps1` from the repository root. The script installs into LocalAppData and registers the executable in the current user's Run key. `uninstall.ps1` removes the app and startup entry, preserving data. The wallpaper setter uses the Win32 API directly and checks its return value.
-
-**Linux:** build with `flutter build linux --release`; run `bash packaging/linux/install.sh`. Startup uses the user's XDG autostart directory. `uninstall.sh` removes the installed bundle and launch entries, preserving preferences and the active wallpaper. The current adapter targets GNOME with both light/dark wallpaper settings and uses the existing graphical-session environment without sudo. KDE and other desktop adapters remain future work. GNOME needs a functioning AppIndicator host/extension; tray_manager 0.5.1 also requires its AppIndicator native library. Linux starts hidden after setup only when a session tray host is available. Missing tray support or an unsupported desktop keeps an accessible control window visible with a persistent explanation; wallpaper errors do not erase that explanation.
-
-These are interactive desktop agents, not machine-level services. They need a logged-in graphical session.
-
-## Linux implementation status and setup
-
-The Linux work was checked against `Plan-Improve.md`. Its section 2 describes the older downloader implementation; the controller, journal, deadline scheduler and tray now replace that design. The original Linux-only scope takes precedence over the plan's cross-platform packaging and KDE release targets. KDE is still unsupported. AppImage packaging was subsequently added at the user’s request; the original implementation work did not create installers or publish releases.
-
-Verified host: **Debian 12, x86-64, GNOME 43.9, Wayland**, Flutter 3.41.9 / Dart 3.11.5, Clang 14, GTK 3.24.38 and Ayatana AppIndicator 0.5.90. No OS upgrade was needed. GNOME X11 uses the same adapter but is untested. Other desktops/architectures and native macOS/Windows builds remain unverified. Both GNOME light/dark background keys must be writable. Missing native libraries prevent launch; missing shell tray support instead shows fallback controls.
-
-Debian build dependencies: `clang cmake ninja-build pkg-config libgtk-3-dev libayatana-appindicator3-dev`. Runtime dependencies include GTK 3, GLib/GIO (`libglib2.0-bin` supplies `gsettings` and `gdbus`), GNOME background schemas/dconf, `libayatana-appindicator3-1`, its DBusMenu libraries, and CA certificates. GNOME needs an AppIndicator shell extension for the tray; this machine has `ubuntu-appindicators@ubuntu.com`.
-
-```sh
-flutter pub get
-flutter analyze
-flutter test
-flutter build linux --release
-./build/linux/x64/release/bundle/comfer_wallpaper --show
-# For login startup, quit Comfer and copy the COMPLETE bundle to a stable path:
-mkdir -p "$HOME/.local/opt/comfer-wallpaper"
-cp -a build/linux/x64/release/bundle/. "$HOME/.local/opt/comfer-wallpaper/"
-"$HOME/.local/opt/comfer-wallpaper/comfer_wallpaper"
-```
-
-First launch offers **Start at login** or **Not now**, and remembers the choice. Build/temporary copies cannot register startup. The per-user entry is `${XDG_CONFIG_HOME:-$HOME/.config}/autostart/com.jeerovan.comfer.desktop`. Its quoted absolute executable path supports spaces and does not use sudo or a shell. `--startup-status`, `--enable-startup`, and `--disable-startup` explicitly manage registration; these commands still need a graphical session for the GTK runner. Normal launches respect deleted entries, `Hidden=true` and `X-GNOME-Autostart-enabled=false`.
-
-Upgrades at the same executable path preserve startup/preferences. After moving the whole bundle, run the new executable with `--enable-startup` only if wanted; it replaces the same entry rather than duplicating it. Quit stops the process without restarting it. The next enabled login can start it again. `--show` applies to a stopped app; duplicate launches exit rather than forwarding commands.
-
-Writable data lives separately under `${XDG_DATA_HOME:-$HOME/.local/share}/com.example.comfer_wallpaper/`, including preferences, wallpaper journal/images, lock and bounded logs. The path-provider plugin may retain a legacy `comfer_wallpaper/` directory. Keep the signed-in graphical session's XDG/dconf environment intact.
-
-Uninstall a manually copied bundle after Quit: run its executable with `--disable-startup`, remove the per-user autostart entry, then remove only the installed bundle directory. Preserve wallpaper/application data until another wallpaper is selected. The existing helper's uninstall command handles its own different bundle location and refuses to remove a running copy.
-
-Validation: analysis, 30 unit/widget tests and the Linux release build pass. Earlier native integration tests verified tray/frequency and reversible wallpaper replacement; the compiled runtime harness verifies real API replacements/cleanup, native DBusMenu actions, checked frequency and persistence, hidden startup, fallback accessibility, duplicate prevention, Quit, and startup registration/relocation/removal outside the repository. A separate helper regression verifies running-process guards, disabled-startup preservation and uninstall data preservation.
-
-```sh
-flutter test integration_test/desktop_test.dart -d linux
-/usr/bin/python3 integration_test/linux_runtime_test.py build/linux/x64/release/bundle
-/usr/bin/python3 integration_test/linux_helpers_test.py
-```
-
-The runtime harness requires `python3-gi` and AT-SPI introspection, temporarily changes wallpaper, isolates application data, and restores original GNOME settings. Actual logout/login, physical suspend/resume, physical mouse/keyboard tray interaction, and other desktop/session combinations remain untested. Sleep/retry behavior has deterministic scheduler coverage. Native actions are tested through DBusMenu, not simulated mouse clicks.
-
-## Build an x86-64 AppImage
-
-After building the release, run the packaging script. It works from any working directory and does **not** rebuild Flutter, install packages, register startup, or alter the input bundle.
-
-```sh
-flutter build linux --release
-APPIMAGETOOL=/absolute/path/to/appimagetool-x86_64.AppImage \
-  bash packaging/linux/build-appimage.sh
-```
-
-Output: `dist/Comfer_Wallpaper-<pubspec-version>-x86_64.AppImage` (currently `Comfer_Wallpaper-0.2.0+2-x86_64.AppImage`). Existing outputs are never overwritten; remove the previous artifact explicitly or supply `--output`. Only Linux **x86-64 hosts and x86-64 release payloads** are accepted. ARM and cross-packaging are unsupported.
-
-Packaging prerequisites: Bash, Python 3, GNU coreutils and an executable x86-64 [appimagetool](https://github.com/AppImage/appimagetool/releases). For example, download the `appimagetool-x86_64.AppImage` asset from release **1.9.1**, make it executable with `chmod +x`, and set `APPIMAGETOOL` as above. Alternatively, put `appimagetool` on `PATH`. The script uses extraction mode for the packaging tool, so packaging does not require FUSE. The tool may download its type-2 runtime; pass `--runtime-file /path/to/runtime-x86_64` to use a separately downloaded, pinned runtime offline. Pin both tool and runtime for repeatable release tooling.
-
-```sh
-bash packaging/linux/build-appimage.sh --help
-APPIMAGETOOL=/absolute/path/to/appimagetool-x86_64.AppImage \
-  bash packaging/linux/build-appimage.sh \
-  --bundle build/linux/x64/release/bundle \
-  --app-icon /path/to/app-icon.png \
-  --tray-icon /path/to/tray-icon.png \
-  --output "$PWD/dist/Comfer Wallpaper-x86_64.AppImage"
-```
-
-Icon requirements:
-
-| Use | Script input and default | Required format | Artwork guidance |
-|---|---|---|---|
-| Application launcher / AppImage file | `--app-icon`; defaults to `assets/comfer_launcher.png` | Square **8-bit RGB or RGBA PNG**, 256×256, **512×512 recommended**, or 1024×1024 | Full-color app identity; transparent background/padding recommended. Avoid tiny text. Embedded as `com.jeerovan.comfer.png` in the AppDir root and hicolor icon directory. |
-| System tray / GNOME indicator | `--tray-icon`; defaults to the **built bundle's** `data/flutter_assets/assets/comfer_launcher.png` | Square **8-bit RGB or RGBA PNG**, 32, **64 recommended**, 128, 256 or 512 px | Prefer a dedicated transparent, simple silhouette, legible when scaled to roughly 16–24 logical pixels. Use sufficient contrast on both light and dark panels. This is a normal PNG, not an automatically recolored symbolic/template icon. |
-
-The existing 512×512 RGBA `assets/comfer_launcher.png` satisfies both format requirements. A dedicated tray design is recommended for legibility but is optional. ICO, ICNS, SVG, JPEG, indexed PNG and non-square images are not accepted by this script. Icon dimensions/format are checked; visual contrast and legibility still need review. `--tray-icon` replaces only the staged Linux Flutter asset, leaving the source/build and macOS/Windows icons unchanged. Without an override, changing source icons requires rebuilding Flutter before packaging.
-
-This AppImage includes the complete Flutter release bundle and its native plugins. **It does not bundle system GTK, GLib, AppIndicator, graphics drivers or GNOME services.** The Linux runtime dependencies listed above still apply. Build on the oldest Linux base you intend to support: AppImage packaging cannot lower the compiled binaries' glibc requirements, and this script does not claim universal distribution compatibility. Missing libraries prevent launch even though a missing tray host can show fallback controls.
-
-To run, move the finished file to a stable location such as `~/Applications/Comfer Wallpaper.AppImage`, keep it executable, and launch it in the signed-in GNOME session. First-launch setup offers login startup. Registration uses the **outer AppImage file**, never `/tmp/.mount_*`. Keep the same filename for upgrades; after moving or renaming it, explicitly use `--enable-startup` from its new path if desired. Disabled startup remains disabled. To uninstall, Quit, use `--disable-startup`, remove the per-user startup entry and delete the AppImage; preserve wallpaper data as described above.
-
-On hosts without a usable FUSE setup, use the runtime's extraction fallback:
-
-```sh
-APPIMAGE_EXTRACT_AND_RUN=1 "$HOME/Applications/Comfer Wallpaper.AppImage" --show
-```
-
-For login startup in that environment, the login session must also provide `APPIMAGE_EXTRACT_AND_RUN=1`, or the host must support normal AppImage mounting. The generated autostart entry runs the outer file directly. Extracting manually with `--appimage-extract` is another diagnostic option, but launching an extracted AppDir is a separate bundle installation rather than the original AppImage.
-
-Packaging regression tests (stub packer; no network):
-
-```sh
-/usr/bin/python3 integration_test/appimage_packaging_test.py
-```
-
-Verified here: 31 Flutter tests, 5 packaging contract tests, clean Flutter analysis, a Linux release build, and actual AppImage creation using appimagetool 1.9.1. The generated image launched from `/` using extraction mode; startup enable/status/disable targeted the outer image, and extracted launcher/tray icons and desktop metadata validated. Normal FUSE mounting and compatibility on other distribution bases were not tested.
-
-The layout follows the [AppDir specification](https://docs.appimage.org/reference/appdir.html); stable startup uses the runtime's documented [APPIMAGE and APPDIR variables](https://docs.appimage.org/packaging-guide/environment-variables.html).
+The release guide contains [Linux setup and uninstall instructions](Release.md#startup-upgrades-and-uninstall), [AppImage usage](Release.md#build-an-x86-64-appimage), and [macOS installation/startup commands](Release.md#macos-build-and-installation-macos-13). Quit before replacing or removing application binaries. Preserve the active wallpaper data when uninstalling.
 
 ## Storage, recovery, and diagnostics
 
@@ -170,33 +43,11 @@ The journal is written before applying a candidate. After interruption, Comfer c
 
 Legacy timestamp-named Downloads images and `wallpaper_file_name.txt` are left untouched because the old version did not maintain a trustworthy ownership record. After the new app successfully sets a wallpaper, manually remove only legacy files you recognize as Comfer downloads. Comfer does not scan or delete arbitrary images.
 
-## Development and validation
+On Linux, application data normally lives under `${XDG_DATA_HOME:-$HOME/.local/share}/com.example.comfer_wallpaper/`. The path-provider plugin may retain the legacy `comfer_wallpaper/` directory. Preferences, the wallpaper journal/images, instance lock and bounded logs are separate from application binaries; per-user startup registration uses XDG config.
 
-The application controller owns scheduling and tray state independently of widgets. Core code is in `lib/services/`; native adapters are in `lib/platform/` and desktop runner files. `macos/Podfile` is included for reproducible builds; Flutter may generate additional Swift Package Manager integration with newer SDKs.
+## Code organization
 
-```sh
-flutter analyze
-flutter test
-# On macOS, with the normal Comfer instance stopped:
-flutter test integration_test/desktop_test.dart -d macos
-flutter test integration_test/login_startup_test.dart -d macos
-flutter build macos --release
-```
-
-The native test temporarily applies two fixture wallpapers, verifies cleanup, and restores the original; it refuses to run if the starting wallpaper file is unavailable. It also creates a real status-bar item and verifies persisted frequency selection. Unit tests cover successful replacement, failed HTTP/apply/image validation, overlapping requests, recovery, invalid paths/symlinks, missing current files, scheduler boundaries, retry timing, and preference failure. Setup tests cover enabling, declining, duplicate-click prevention, approval, retry, uninstalled copies, and respecting previous decisions.
-
-Implementation phases completed on macOS: managed replacement/recovery, persistent scheduling, background engine/tray lifecycle, and installation scripts. Native Windows builds, KDE support, full multi-display/Spaces coverage, login after reboot, and physical sleep/wake verification remain outside the checks performed on this host. Native menu mouse/keyboard interaction also needs manual verification if desktop automation is unavailable.
-
-Verified on macOS 26.7 with Flutter 3.41.9 and Xcode 26.6:
-
-- `flutter analyze`: no issues. Version 0.2.0 passes 22 unit/widget tests and the native login-startup guard test; the 2 wallpaper/tray integration tests passed during the earlier implementation.
-- Release build and strict/deep code-signature verification passed.
-- Installed app applied a real downloaded wallpaper; the manifest and native desktop API agreed on its path, with one managed image remaining.
-- Duplicate launch exited without creating a second running instance.
-- Graceful termination used the same shutdown function as the Quit menu action.
-- Install, upgrade, uninstall, and reinstall completed; startup status changed from enabled to unregistered and back to enabled. Active wallpaper data survived uninstall.
-
-The native tests establish status-item creation and preference persistence, but do not simulate clicking every native menu item. Desktop UI automation timed out on this host. Earlier live tests exposed and resolved hidden-engine startup and delayed desktop-path confirmation; an initial integration restoration failed, so the test now requires an existing original image before changing it. Later native runs passed. The isolated fixture left by that failed run was removed after a real wallpaper was confirmed active.
+The application controller owns scheduling and tray state independently of widgets. Core code is in `lib/services/`; platform adapters are in `lib/platform/` and desktop runner files. See [release validation](Release.md#release-validation-and-known-limitations) for test commands and verified versus untested behavior.
 
 ## License
 

@@ -75,6 +75,77 @@ class PackagingTest(unittest.TestCase):
         self.assertEqual((self.capture / 'usr/bin/data/flutter_assets/assets/comfer_launcher.png').read_bytes(), tray.read_bytes())
         self.assertNotEqual((self.bundle / 'data/flutter_assets/assets/comfer_launcher.png').read_bytes(), tray.read_bytes())
 
+    def dependency_tools(self):
+        tools = self.root / 'tools'
+        tools.mkdir()
+        modules = self.root / 'gio-modules'
+        modules.mkdir()
+        (modules / 'giomodule.cache').write_text('fixture')
+        pkgconfig = tools / 'pkg-config'
+        pkgconfig.write_text('#!/usr/bin/python3\nimport sys\n'
+                             'if "--variable=giomoduledir" in sys.argv: print(' + repr(str(modules)) + ')\n')
+        pkgconfig.chmod(0o755)
+        deploy = tools / 'linuxdeploy'
+        deploy.write_text('#!/usr/bin/python3\nimport pathlib,sys,shutil\n'
+                          'root=pathlib.Path(sys.argv[sys.argv.index("--appdir")+1])\n'
+                          'for name in ["libgtk-3.so.0", "libayatana-appindicator3.so.1"]:\n'
+                          ' shutil.copy("/bin/true", root/"usr/lib"/name)\n')
+        deploy.chmod(0o755)
+        plugin = tools / 'linuxdeploy-plugin-gtk.sh'
+        plugin.write_text('#!/usr/bin/python3\nimport pathlib,sys\n'
+                          'root=pathlib.Path(sys.argv[2]); (root/"apprun-hooks").mkdir(exist_ok=True)\n'
+                          '(root/"apprun-hooks/linuxdeploy-plugin-gtk.sh").write_text('
+                          + repr('export GDK_BACKEND=x11\nexport GSETTINGS_SCHEMA_DIR="$APPDIR/schemas"\nexport XDG_DATA_DIRS="$APPDIR/usr/share"\n') + ')\n')
+        plugin.chmod(0o755)
+        self.env['PATH'] = str(tools) + os.pathsep + os.environ['PATH']
+        # Explicit flags must override environment defaults, not just find tools on PATH.
+        self.env['LINUXDEPLOY'] = '/missing/default-linuxdeploy'
+        self.env['LINUXDEPLOY_GTK_PLUGIN'] = '/missing/default-gtk-plugin'
+        return deploy, plugin
+
+    def test_bundled_layout_hooks_and_clean_host_commands(self):
+        deploy, plugin = self.dependency_tools()
+        result = self.run_script('--bundle-deps', '--linuxdeploy', str(deploy), '--gtk-plugin', str(plugin))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.capture / 'usr/bin/lib').is_symlink())
+        self.assertTrue((self.capture / 'usr/lib/libapp.so').exists())
+        self.assertTrue((self.capture / 'usr/lib/gio/modules/giomodule.cache').exists())
+        # Probe the app environment and a host tool launched from it.
+        host = self.root / 'host-tools'; host.mkdir()
+        command = host / 'gsettings'
+        command.write_text('#!/usr/bin/python3\nimport os,json\n'
+                           'print(json.dumps({k:os.environ.get(k) for k in ["LD_LIBRARY_PATH","GSETTINGS_SCHEMA_DIR","XDG_DATA_DIRS","GDK_BACKEND"]}))\n')
+        command.chmod(0o755)
+        runner = self.capture / 'usr/bin/comfer_wallpaper'
+        runner.write_text('#!/usr/bin/python3\nimport os,json,subprocess\n'
+                          'print(json.dumps({"schema":os.environ.get("GSETTINGS_SCHEMA_DIR"),'
+                          '"backend":os.environ.get("GDK_BACKEND"),'
+                          '"host":json.loads(subprocess.check_output(["gsettings"],text=True))}))\n')
+        runner.chmod(0o755)
+        import json
+        for backend in (None, 'wayland'):
+            env = dict(os.environ, PATH=str(host)+os.pathsep+os.environ['PATH'],
+                       LD_LIBRARY_PATH='/host/libraries', GSETTINGS_SCHEMA_DIR='/host/schemas',
+                       XDG_DATA_DIRS='/host/share')
+            env.pop('GDK_BACKEND', None)
+            if backend: env['GDK_BACKEND'] = backend
+            run = subprocess.run([str(self.capture / 'AppRun')], cwd='/', env=env, text=True, capture_output=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            value = json.loads(run.stdout)
+            self.assertEqual(value['schema'], str(self.capture / 'schemas'))
+            self.assertEqual(value['backend'], backend)
+            self.assertEqual(value['host'], {'LD_LIBRARY_PATH':'/host/libraries',
+                             'GSETTINGS_SCHEMA_DIR':'/host/schemas', 'XDG_DATA_DIRS':'/host/share',
+                             'GDK_BACKEND':backend})
+
+    def test_dependency_failure_does_not_publish(self):
+        deploy, plugin = self.dependency_tools()
+        deploy.write_text('#!/bin/sh\nexit 42\n')
+        result = self.run_script('--bundle-deps', '--linuxdeploy', str(deploy), '--gtk-plugin', str(plugin))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(list(self.root.glob('.comfer-appimage.*')))
+
     def test_missing_release_fails_without_output(self):
         (self.bundle / 'lib/libapp.so').unlink()
         self.assertNotEqual(self.run_script().returncode, 0)

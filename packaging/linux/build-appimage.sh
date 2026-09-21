@@ -9,6 +9,9 @@ TRAY_ICON=''
 OUTPUT=''
 TOOL="${APPIMAGETOOL:-appimagetool}"
 RUNTIME=''
+BUNDLE_DEPS=0
+DEPLOY="${LINUXDEPLOY:-linuxdeploy}"
+GTK_PLUGIN="${LINUXDEPLOY_GTK_PLUGIN:-linuxdeploy-plugin-gtk.sh}"
 usage() {
   cat <<'HELP'
 Usage: packaging/linux/build-appimage.sh [options]
@@ -18,22 +21,28 @@ Run flutter build linux --release first. Linux x86_64 only.
   --app-icon PNG       Square launcher PNG, 256/512/1024 px (default: assets/comfer_launcher.png)
   --tray-icon PNG      Square tray PNG, 32/64/128/256/512 px (default: built bundle's icon)
   --appimagetool FILE  appimagetool executable (or set APPIMAGETOOL)
+  --bundle-deps        Bundle GTK 3/AppIndicator with linuxdeploy and its GTK plugin
+  --linuxdeploy FILE   linuxdeploy executable (or set LINUXDEPLOY)
+  --gtk-plugin FILE    GTK plugin script (or set LINUXDEPLOY_GTK_PLUGIN)
   --runtime-file FILE Optional x86_64 type-2 runtime for offline/repeatable packaging
   -h, --help           Show this help
 Requires bash, Python 3, GNU coreutils, and appimagetool. No sudo or Flutter rebuild.
-Host GTK 3 / AppIndicator / GNOME services remain runtime dependencies; see README.
+With --bundle-deps, GTK/AppIndicator libraries are included; desktop services remain on the host.
+Without it, host GTK/AppIndicator are required. See Release.md.
 HELP
 }
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 while (($#)); do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --bundle|--output|--app-icon|--tray-icon|--appimagetool|--runtime-file)
+    --bundle-deps) BUNDLE_DEPS=1; shift ;;
+    --bundle|--output|--app-icon|--tray-icon|--appimagetool|--runtime-file|--linuxdeploy|--gtk-plugin)
       (($# >= 2)) && [[ -n "$2" ]] || die "Missing value for $1"
       case "$1" in
         --bundle) BUNDLE="$2" ;; --output) OUTPUT="$2" ;;
         --app-icon) APP_ICON="$2" ;; --tray-icon) TRAY_ICON="$2" ;;
         --appimagetool) TOOL="$2" ;; --runtime-file) RUNTIME="$2" ;;
+        --linuxdeploy) DEPLOY="$2" ;; --gtk-plugin) GTK_PLUGIN="$2" ;;
       esac
       shift 2 ;;
     *) die "Unknown option: $1 (use --help)" ;;
@@ -44,6 +53,18 @@ command -v python3 >/dev/null || die 'Python 3 is required.'
 TOOL="$(command -v -- "$TOOL")" || die 'Set APPIMAGETOOL to an executable from https://github.com/AppImage/appimagetool/releases'
 TOOL="$(realpath -- "$TOOL")"
 [[ -x "$TOOL" ]] || die 'appimagetool is not executable.'
+if ((BUNDLE_DEPS)); then
+  DEPLOY="$(command -v -- "$DEPLOY")" || die 'Set LINUXDEPLOY to the x86_64 linuxdeploy AppImage.'
+  GTK_PLUGIN="$(command -v -- "$GTK_PLUGIN")" || die 'Set LINUXDEPLOY_GTK_PLUGIN to linuxdeploy-plugin-gtk.sh.'
+  DEPLOY="$(realpath -- "$DEPLOY")"
+  GTK_PLUGIN="$(realpath -- "$GTK_PLUGIN")"
+  [[ -x "$DEPLOY" && -x "$GTK_PLUGIN" ]] || die 'linuxdeploy and the GTK plugin must be executable.'
+  for requirement in pkg-config file find patchelf; do
+    command -v "$requirement" >/dev/null || die "Missing dependency bundling tool: $requirement"
+  done
+  pkg-config --exists gtk+-3.0 librsvg-2.0 gobject-introspection-1.0 ||
+    die 'GTK plugin needs libgtk-3-dev, librsvg2-dev and libgirepository1.0-dev (Debian/Ubuntu).'
+fi
 BUNDLE="$(realpath -m -- "$BUNDLE")"
 APP_ICON="$(realpath -m -- "$APP_ICON")"
 [[ -n "$TRAY_ICON" ]] || TRAY_ICON="$BUNDLE/data/flutter_assets/assets/comfer_launcher.png"
@@ -137,10 +158,45 @@ export APPDIR
 exec "$APPDIR/usr/bin/comfer_wallpaper" "$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"
+if ((BUNDLE_DEPS)); then
+  # Flutter expects lib/ beside its executable; share one copy with linuxdeploy.
+  mv "$APPDIR/usr/bin/lib" "$APPDIR/usr/lib"
+  ln -s ../lib "$APPDIR/usr/bin/lib"
+  export APPIMAGE_EXTRACT_AND_RUN=1
+  # Preserve Flutter's prebuilt AOT/engine binaries; they are already stripped.
+  export NO_STRIP=1
+  "$DEPLOY" --appdir "$APPDIR"
+  DEPLOY_GTK_VERSION=3 LINUXDEPLOY="$DEPLOY" "$GTK_PLUGIN" --appdir "$APPDIR"
+  # GIO backends are loaded dynamically, so normal ELF dependency scanning misses them.
+  GIO_MODULES="$(pkg-config --variable=giomoduledir gio-2.0)"
+  [[ -d "$GIO_MODULES" ]] || die 'Cannot find the build host GIO modules.'
+  mkdir -p "$APPDIR/usr/lib/gio/modules"
+  cp -a "$GIO_MODULES/." "$APPDIR/usr/lib/gio/modules/"
+  # Process the extra dynamically loaded modules copied by the GTK plugin.
+  "$DEPLOY" --appdir "$APPDIR"
+  [[ -f "$APPDIR/apprun-hooks/linuxdeploy-plugin-gtk.sh" ]] || die 'GTK plugin did not produce its runtime hook.'
+  [[ -f "$APPDIR/usr/lib/libgtk-3.so.0" ]] || die 'GTK library was not bundled.'
+  [[ -f "$APPDIR/usr/lib/libayatana-appindicator3.so.1" || -f "$APPDIR/usr/lib/libappindicator3.so.1" ]] ||
+    die 'AppIndicator library was not bundled; check tray_manager and the release payload.'
+  mkdir -p "$APPDIR/usr/lib/comfer/host-bin"
+  cp "$SCRIPT_DIR/appimage-environment.sh" "$APPDIR/usr/lib/comfer/"
+  for command_name in gsettings gdbus dbus-send xdg-open; do
+    cp "$SCRIPT_DIR/appimage-host-command" "$APPDIR/usr/lib/comfer/host-bin/$command_name"
+    chmod +x "$APPDIR/usr/lib/comfer/host-bin/$command_name"
+  done
+  # Replace linuxdeploy's generic launcher, keeping and sourcing GTK hooks.
+  rm -f "$APPDIR/AppRun"
+  cp "$SCRIPT_DIR/AppRun-bundled" "$APPDIR/AppRun"
+  chmod +x "$APPDIR/AppRun"
+fi
 ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" "${RUNTIME_ARGS[@]}" "$APPDIR" "$WORK/output.AppImage"
 [[ -s "$WORK/output.AppImage" ]] || die 'appimagetool did not create an image.'
 chmod +x "$WORK/output.AppImage"
 # Hard-link publication fails safely if another packaging process won the race.
 ln -- "$WORK/output.AppImage" "$OUTPUT"
 printf 'Created %s\n' "$OUTPUT"
-printf 'Host GTK 3, AppIndicator and GNOME session services are required.\n'
+if ((BUNDLE_DEPS)); then
+  printf 'GTK 3 and AppIndicator libraries bundled. Host GNOME/session D-Bus, tray host, graphics drivers and compatible glibc are still required.\n'
+else
+  printf 'Host GTK 3, AppIndicator and GNOME session services are required (use --bundle-deps to include libraries).\n'
+fi

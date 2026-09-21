@@ -1,0 +1,7 @@
+#!/bin/bash
+set -e
+command_name=${0##*/}
+source "$APPDIR/usr/lib/comfer/appimage-environment.sh"
+comfer_restore_host_environment
+# Use the original PATH; wrappers cannot resolve back into themselves.
+exec "$command_name" "$@"

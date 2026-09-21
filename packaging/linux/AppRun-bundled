@@ -1,0 +1,22 @@
+#!/bin/bash
+set -e
+APPDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export APPDIR
+source "$APPDIR/usr/lib/comfer/appimage-environment.sh"
+comfer_save_host_environment
+# Host CLI tools must not load this image's GLib or GTK modules/schemas.
+export PATH="$APPDIR/usr/lib/comfer/host-bin:$PATH"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+for hook in "$APPDIR"/apprun-hooks/*.sh; do
+  [[ -f "$hook" ]] && source "$hook"
+done
+export GIO_MODULE_DIR="$APPDIR/usr/lib/gio/modules"
+unset GIO_EXTRA_MODULES
+# The upstream GTK hook forces X11. Preserve the caller's backend selection,
+# or let GTK select it, so native Wayland remains available.
+if [[ "$COMFER_HOST_GDK_BACKEND_SET" == 1 ]]; then
+  export GDK_BACKEND="$COMFER_HOST_GDK_BACKEND"
+else
+  unset GDK_BACKEND
+fi
+exec "$APPDIR/usr/bin/comfer_wallpaper" "$@"

@@ -53,5 +53,6 @@ Podfile
 
 *.md
 !README.md
+!Release.md
 !LICENSE.md
 !/macos/Podfile
