@@ -4,7 +4,7 @@ A background desktop wallpaper app with three status-bar controls: **Change now*
 
 ## Behavior
 
-- Starts in the signed-in user's desktop session after installation. No normal window is shown on macOS or Windows when tray initialization succeeds.
+- Starts in the signed-in user's desktop session when login startup is enabled. After first-launch setup, no normal window is shown on macOS or Windows when tray initialization succeeds.
 - Keeps one managed wallpaper after a successful replacement and cleanup. The previous image remains available until the replacement is validated and confirmed by the desktop.
 - Stores images and a recovery journal in the app's application-support directory, rather than Downloads. Unknown files and legacy Downloads images are never automatically deleted.
 - Persists Hourly/Daily across restarts. Daily means 24 hours after the last successful change. A manual change resets the interval.
@@ -15,6 +15,10 @@ A background desktop wallpaper app with three status-bar controls: **Change now*
 A temporary image and previous image may coexist during replacement or recovery. Cleanup failures block further downloads until resolved, preventing unbounded accumulation. A file still reported as being used on another display is retained for safety.
 
 ## macOS installation (macOS 13+)
+
+For a downloaded release, open the DMG, drag **Comfer Wallpaper** into **Applications**, and open the installed app. Version **0.2.0 (build 2)** offers **Start at login** or **Not now** on first launch. If macOS requires approval, the setup provides **Open System Settings** and **Check again**. Once you choose, setup will not prompt again or override a later change in System Settings. Existing installations with startup already enabled skip setup.
+
+Opening an uninstalled copy shows instructions to move it into Applications first. Close that copy and launch the installed app to continue. Closing an unfinished setup quits Comfer; the choice remains available next launch. No Terminal command is needed for drag-and-drop installation.
 
 Build with Flutter, Xcode, and CocoaPods installed:
 
@@ -82,16 +86,17 @@ flutter analyze
 flutter test
 # On macOS, with the normal Comfer instance stopped:
 flutter test integration_test/desktop_test.dart -d macos
+flutter test integration_test/login_startup_test.dart -d macos
 flutter build macos --release
 ```
 
-The native test temporarily applies two fixture wallpapers, verifies cleanup, and restores the original; it refuses to run if the starting wallpaper file is unavailable. It also creates a real status-bar item and verifies persisted frequency selection. Unit tests cover successful replacement, failed HTTP/apply/image validation, overlapping requests, recovery, invalid paths/symlinks, missing current files, scheduler boundaries, retry timing, and preference failure.
+The native test temporarily applies two fixture wallpapers, verifies cleanup, and restores the original; it refuses to run if the starting wallpaper file is unavailable. It also creates a real status-bar item and verifies persisted frequency selection. Unit tests cover successful replacement, failed HTTP/apply/image validation, overlapping requests, recovery, invalid paths/symlinks, missing current files, scheduler boundaries, retry timing, and preference failure. Setup tests cover enabling, declining, duplicate-click prevention, approval, retry, uninstalled copies, and respecting previous decisions.
 
 Implementation phases completed on macOS: managed replacement/recovery, persistent scheduling, background engine/tray lifecycle, and installation scripts. Native Windows/Linux builds, KDE support, full multi-display/Spaces coverage, login after reboot, and physical sleep/wake verification remain outside the checks performed on this host. Native menu mouse/keyboard interaction also needs manual verification if desktop automation is unavailable.
 
 Verified on macOS 26.7 with Flutter 3.41.9 and Xcode 26.6:
 
-- `flutter analyze`: no issues; 15 unit tests and 2 native integration tests passed.
+- `flutter analyze`: no issues. Version 0.2.0 passes 22 unit/widget tests and the native login-startup guard test; the 2 wallpaper/tray integration tests passed during the earlier implementation.
 - Release build and strict/deep code-signature verification passed.
 - Installed app applied a real downloaded wallpaper; the manifest and native desktop API agreed on its path, with one managed image remaining.
 - Duplicate launch exited without creating a second running instance.

@@ -9,6 +9,8 @@ import 'package:uuid/uuid.dart';
 import 'package:window_manager/window_manager.dart';
 import 'app_controller.dart';
 import 'platform/desktop_platform.dart';
+import 'platform/login_startup.dart';
+import 'startup_setup.dart';
 import 'services/tray_service.dart';
 import 'services/wallpaper_scheduler.dart';
 import 'services/wallpaper_service.dart';
@@ -28,6 +30,8 @@ Future<void> main(List<String> arguments) async {
     exit(0);
   }
   final prefs = await SharedPreferences.getInstance();
+  final startup = Platform.isMacOS ? LoginStartup(prefs) : null;
+  final setupVisible = ValueNotifier(await startup?.needsSetup() ?? false);
   var userId = prefs.getString('user_id');
   if (userId == null || userId.isEmpty) {
     userId = const Uuid().v4();
@@ -77,12 +81,27 @@ Future<void> main(List<String> arguments) async {
     ProcessSignal.sigint.watch().listen((_) => unawaited(quit()));
   }
 
-  final lifecycle = DesktopLifecycle(controller, quit);
+  final lifecycle =
+      DesktopLifecycle(controller, quit, isSettingUp: () => setupVisible.value);
   windowManager.addListener(lifecycle);
   WidgetsBinding.instance.addObserver(lifecycle);
-  runApp(ComferApp(controller: controller, quit: quit));
+  Future<void> finishSetup() async {
+    setupVisible.value = false;
+    if (lifecycle.hasTray) await windowManager.hide();
+  }
+
+  runApp(ValueListenableBuilder<bool>(
+    valueListenable: setupVisible,
+    builder: (context, visible, _) => ComferApp(
+      controller: controller,
+      quit: quit,
+      setup: visible && startup != null
+          ? StartupSetup(startup: startup, onDone: finishSetup, onQuit: quit)
+          : null,
+    ),
+  ));
   await windowManager.waitUntilReadyToShow(const WindowOptions(
-      size: Size(440, 340),
+      size: Size(460, 430),
       minimumSize: Size(400, 320),
       center: true,
       skipTaskbar: true,
@@ -103,6 +122,7 @@ Future<void> main(List<String> arguments) async {
     lifecycle.hasTray = !Platform.isLinux;
     await show();
   }
+  if (setupVisible.value) await show();
   await controller.start();
   if (arguments.contains('--change-now')) {
     await controller.scheduler.changeNow();
@@ -110,13 +130,14 @@ Future<void> main(List<String> arguments) async {
 }
 
 class DesktopLifecycle with WindowListener, WidgetsBindingObserver {
-  DesktopLifecycle(this.controller, this.quit);
+  DesktopLifecycle(this.controller, this.quit, {this.isSettingUp});
   final AppController controller;
   final Future<void> Function() quit;
+  final bool Function()? isSettingUp;
   bool hasTray = true;
   @override
   void onWindowClose() {
-    if (hasTray) {
+    if (hasTray && isSettingUp?.call() != true) {
       windowManager.hide();
     } else {
       unawaited(quit());
@@ -130,9 +151,11 @@ class DesktopLifecycle with WindowListener, WidgetsBindingObserver {
 }
 
 class ComferApp extends StatelessWidget {
-  const ComferApp({super.key, required this.controller, required this.quit});
+  const ComferApp(
+      {super.key, required this.controller, required this.quit, this.setup});
   final AppController controller;
   final Future<void> Function() quit;
+  final Widget? setup;
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'Comfer Wallpaper',
@@ -141,48 +164,58 @@ class ComferApp extends StatelessWidget {
             colorSchemeSeed: const Color(0xff486b58), useMaterial3: true),
         home: Scaffold(
             body: SafeArea(
-                child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: ListenableBuilder(
-              listenable: controller,
-              builder: (context, _) => Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Comfer Wallpaper',
-                          style: Theme.of(context).textTheme.headlineSmall),
-                      const SizedBox(height: 12),
-                      Text(controller.error ??
-                          'Wallpapers change automatically. Use the status-bar icon to control Comfer.'),
-                      const SizedBox(height: 16),
-                      SegmentedButton<Frequency>(
-                          segments: const [
-                            ButtonSegment(
-                                value: Frequency.hourly, label: Text('Hourly')),
-                            ButtonSegment(
-                                value: Frequency.daily, label: Text('Daily')),
-                          ],
-                          selected: {
-                            controller.scheduler.frequency
-                          },
-                          onSelectionChanged: controller.selecting ||
-                                  controller.stopping
-                              ? null
-                              : (values) => controller.select(values.first)),
-                      const Spacer(),
-                      Row(children: [
-                        FilledButton(
-                            onPressed: controller.busy || controller.stopping
-                                ? null
-                                : controller.scheduler.changeNow,
-                            child: Text(
-                                controller.busy ? 'Changing…' : 'Change now')),
-                        const Spacer(),
-                        TextButton(
-                            onPressed: controller.stopping ? null : quit,
-                            child: const Text('Quit'))
-                      ]),
-                    ],
-                  )),
-        ))),
+                child: setup ??
+                    Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: ListenableBuilder(
+                          listenable: controller,
+                          builder: (context, _) => Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Comfer Wallpaper',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .headlineSmall),
+                                  const SizedBox(height: 12),
+                                  Text(controller.error ??
+                                      'Wallpapers change automatically. Use the status-bar icon to control Comfer.'),
+                                  const SizedBox(height: 16),
+                                  SegmentedButton<Frequency>(
+                                      segments: const [
+                                        ButtonSegment(
+                                            value: Frequency.hourly,
+                                            label: Text('Hourly')),
+                                        ButtonSegment(
+                                            value: Frequency.daily,
+                                            label: Text('Daily')),
+                                      ],
+                                      selected: {
+                                        controller.scheduler.frequency
+                                      },
+                                      onSelectionChanged: controller
+                                                  .selecting ||
+                                              controller.stopping
+                                          ? null
+                                          : (values) =>
+                                              controller.select(values.first)),
+                                  const Spacer(),
+                                  Row(children: [
+                                    FilledButton(
+                                        onPressed: controller.busy ||
+                                                controller.stopping
+                                            ? null
+                                            : controller.scheduler.changeNow,
+                                        child: Text(controller.busy
+                                            ? 'Changing…'
+                                            : 'Change now')),
+                                    const Spacer(),
+                                    TextButton(
+                                        onPressed:
+                                            controller.stopping ? null : quit,
+                                        child: const Text('Quit'))
+                                  ]),
+                                ],
+                              )),
+                    ))),
       );
 }
