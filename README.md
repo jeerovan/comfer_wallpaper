@@ -62,7 +62,7 @@ These are interactive desktop agents, not machine-level services. They need a lo
 
 ## Linux implementation status and setup
 
-The Linux work was checked against `Plan-Improve.md`. Its section 2 describes the older downloader implementation; the controller, journal, deadline scheduler and tray now replace that design. The original Linux-only scope takes precedence over the plan's cross-platform packaging and KDE release targets. KDE is still unsupported, and no installer/release package was created.
+The Linux work was checked against `Plan-Improve.md`. Its section 2 describes the older downloader implementation; the controller, journal, deadline scheduler and tray now replace that design. The original Linux-only scope takes precedence over the plan's cross-platform packaging and KDE release targets. KDE is still unsupported. AppImage packaging was subsequently added at the user’s request; the original implementation work did not create installers or publish releases.
 
 Verified host: **Debian 12, x86-64, GNOME 43.9, Wayland**, Flutter 3.41.9 / Dart 3.11.5, Clang 14, GTK 3.24.38 and Ayatana AppIndicator 0.5.90. No OS upgrade was needed. GNOME X11 uses the same adapter but is untested. Other desktops/architectures and native macOS/Windows builds remain unverified. Both GNOME light/dark background keys must be writable. Missing native libraries prevent launch; missing shell tray support instead shows fallback controls.
 
@@ -97,6 +97,61 @@ flutter test integration_test/desktop_test.dart -d linux
 ```
 
 The runtime harness requires `python3-gi` and AT-SPI introspection, temporarily changes wallpaper, isolates application data, and restores original GNOME settings. Actual logout/login, physical suspend/resume, physical mouse/keyboard tray interaction, and other desktop/session combinations remain untested. Sleep/retry behavior has deterministic scheduler coverage. Native actions are tested through DBusMenu, not simulated mouse clicks.
+
+## Build an x86-64 AppImage
+
+After building the release, run the packaging script. It works from any working directory and does **not** rebuild Flutter, install packages, register startup, or alter the input bundle.
+
+```sh
+flutter build linux --release
+APPIMAGETOOL=/absolute/path/to/appimagetool-x86_64.AppImage \
+  bash packaging/linux/build-appimage.sh
+```
+
+Output: `dist/Comfer_Wallpaper-<pubspec-version>-x86_64.AppImage` (currently `Comfer_Wallpaper-0.2.0+2-x86_64.AppImage`). Existing outputs are never overwritten; remove the previous artifact explicitly or supply `--output`. Only Linux **x86-64 hosts and x86-64 release payloads** are accepted. ARM and cross-packaging are unsupported.
+
+Packaging prerequisites: Bash, Python 3, GNU coreutils and an executable x86-64 [appimagetool](https://github.com/AppImage/appimagetool/releases). For example, download the `appimagetool-x86_64.AppImage` asset from release **1.9.1**, make it executable with `chmod +x`, and set `APPIMAGETOOL` as above. Alternatively, put `appimagetool` on `PATH`. The script uses extraction mode for the packaging tool, so packaging does not require FUSE. The tool may download its type-2 runtime; pass `--runtime-file /path/to/runtime-x86_64` to use a separately downloaded, pinned runtime offline. Pin both tool and runtime for repeatable release tooling.
+
+```sh
+bash packaging/linux/build-appimage.sh --help
+APPIMAGETOOL=/absolute/path/to/appimagetool-x86_64.AppImage \
+  bash packaging/linux/build-appimage.sh \
+  --bundle build/linux/x64/release/bundle \
+  --app-icon /path/to/app-icon.png \
+  --tray-icon /path/to/tray-icon.png \
+  --output "$PWD/dist/Comfer Wallpaper-x86_64.AppImage"
+```
+
+Icon requirements:
+
+| Use | Script input and default | Required format | Artwork guidance |
+|---|---|---|---|
+| Application launcher / AppImage file | `--app-icon`; defaults to `assets/comfer_launcher.png` | Square **8-bit RGB or RGBA PNG**, 256×256, **512×512 recommended**, or 1024×1024 | Full-color app identity; transparent background/padding recommended. Avoid tiny text. Embedded as `com.jeerovan.comfer.png` in the AppDir root and hicolor icon directory. |
+| System tray / GNOME indicator | `--tray-icon`; defaults to the **built bundle's** `data/flutter_assets/assets/comfer_launcher.png` | Square **8-bit RGB or RGBA PNG**, 32, **64 recommended**, 128, 256 or 512 px | Prefer a dedicated transparent, simple silhouette, legible when scaled to roughly 16–24 logical pixels. Use sufficient contrast on both light and dark panels. This is a normal PNG, not an automatically recolored symbolic/template icon. |
+
+The existing 512×512 RGBA `assets/comfer_launcher.png` satisfies both format requirements. A dedicated tray design is recommended for legibility but is optional. ICO, ICNS, SVG, JPEG, indexed PNG and non-square images are not accepted by this script. Icon dimensions/format are checked; visual contrast and legibility still need review. `--tray-icon` replaces only the staged Linux Flutter asset, leaving the source/build and macOS/Windows icons unchanged. Without an override, changing source icons requires rebuilding Flutter before packaging.
+
+This AppImage includes the complete Flutter release bundle and its native plugins. **It does not bundle system GTK, GLib, AppIndicator, graphics drivers or GNOME services.** The Linux runtime dependencies listed above still apply. Build on the oldest Linux base you intend to support: AppImage packaging cannot lower the compiled binaries' glibc requirements, and this script does not claim universal distribution compatibility. Missing libraries prevent launch even though a missing tray host can show fallback controls.
+
+To run, move the finished file to a stable location such as `~/Applications/Comfer Wallpaper.AppImage`, keep it executable, and launch it in the signed-in GNOME session. First-launch setup offers login startup. Registration uses the **outer AppImage file**, never `/tmp/.mount_*`. Keep the same filename for upgrades; after moving or renaming it, explicitly use `--enable-startup` from its new path if desired. Disabled startup remains disabled. To uninstall, Quit, use `--disable-startup`, remove the per-user startup entry and delete the AppImage; preserve wallpaper data as described above.
+
+On hosts without a usable FUSE setup, use the runtime's extraction fallback:
+
+```sh
+APPIMAGE_EXTRACT_AND_RUN=1 "$HOME/Applications/Comfer Wallpaper.AppImage" --show
+```
+
+For login startup in that environment, the login session must also provide `APPIMAGE_EXTRACT_AND_RUN=1`, or the host must support normal AppImage mounting. The generated autostart entry runs the outer file directly. Extracting manually with `--appimage-extract` is another diagnostic option, but launching an extracted AppDir is a separate bundle installation rather than the original AppImage.
+
+Packaging regression tests (stub packer; no network):
+
+```sh
+/usr/bin/python3 integration_test/appimage_packaging_test.py
+```
+
+Verified here: 31 Flutter tests, 5 packaging contract tests, clean Flutter analysis, a Linux release build, and actual AppImage creation using appimagetool 1.9.1. The generated image launched from `/` using extraction mode; startup enable/status/disable targeted the outer image, and extracted launcher/tray icons and desktop metadata validated. Normal FUSE mounting and compatibility on other distribution bases were not tested.
+
+The layout follows the [AppDir specification](https://docs.appimage.org/reference/appdir.html); stable startup uses the runtime's documented [APPIMAGE and APPDIR variables](https://docs.appimage.org/packaging-guide/environment-variables.html).
 
 ## Storage, recovery, and diagnostics
 

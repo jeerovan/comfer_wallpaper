@@ -15,6 +15,32 @@ class InstalledStartup extends LinuxStartup {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('AppImage startup uses the stable outer file, not the mount path', () {
+    final startup = LinuxStartup(environment: {
+      'APPIMAGE': '/home/test/Applications/Comfer Wallpaper.AppImage',
+      'APPDIR': '/tmp/.mount_comfer',
+    }, resolvedExecutable: '/tmp/.mount_comfer/usr/bin/comfer_wallpaper');
+    expect(startup.executable,
+        '/home/test/Applications/Comfer Wallpaper.AppImage');
+    expect(
+        LinuxStartup.appImagePath({
+          'APPIMAGE': '/home/test/Comfer.AppImage',
+          'APPDIR': '/tmp/other',
+        }, '/usr/bin/comfer_wallpaper'),
+        isNull);
+    expect(
+        LinuxStartup.appImagePath({
+          'APPIMAGE': 'relative.AppImage',
+          'APPDIR': '/tmp/mount',
+        }, '/tmp/mount/usr/bin/comfer_wallpaper'),
+        isNull);
+    expect(
+        LinuxStartup.appImagePath({
+          'APPIMAGE': '/home/test/Comfer.AppImage',
+          'APPDIR': '/tmp/mount',
+        }, '/tmp/mount-other/usr/bin/comfer_wallpaper'),
+        isNull);
+  });
   test(
       'Linux first-launch consent persists without overriding external disable',
       () async {
