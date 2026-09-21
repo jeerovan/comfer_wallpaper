@@ -12,6 +12,7 @@
 .svn/
 .swiftpm/
 .codex/
+.serena/
 migrate_working_dir/
 
 # IntelliJ related

@@ -11,6 +11,11 @@ abstract interface class WallpaperPlatform {
   Future<void> apply(String path);
 }
 
+/// Adapters with multiple settings can require all settings to agree.
+abstract interface class WallpaperConfirmation {
+  bool confirms(Set<String> paths, String candidate);
+}
+
 class WallpaperService {
   WallpaperService(
       {required this.store,
@@ -37,12 +42,17 @@ class WallpaperService {
     await recover();
   }
 
+  bool _confirms(Set<String> paths, String candidate) =>
+      platform is WallpaperConfirmation
+          ? (platform as WallpaperConfirmation).confirms(paths, candidate)
+          : paths.contains(candidate);
+
   Future<bool> recover() async {
     var paths = await platform.currentPaths();
     final pending = store.pending;
     if (pending != null) {
       await store.requireRegular(pending);
-      if (!paths.contains(store.file(pending).path)) {
+      if (!_confirms(paths, store.file(pending).path)) {
         // A setter can complete asynchronously after a crash. Roll forward
         // rather than deleting an image the desktop may still be adopting.
         await platform.apply(store.file(pending).path);
@@ -127,12 +137,12 @@ class WallpaperService {
   Future<Set<String>> _confirmedPaths(String candidate) async {
     var paths = await platform.currentPaths();
     for (var attempt = 0;
-        !paths.contains(candidate) && attempt < 10;
+        !_confirms(paths, candidate) && attempt < 10;
         attempt++) {
       await Future<void>.delayed(const Duration(milliseconds: 200));
       paths = await platform.currentPaths();
     }
-    if (!paths.contains(candidate)) {
+    if (!_confirms(paths, candidate)) {
       throw StateError('The desktop did not confirm the new wallpaper');
     }
     return paths;

@@ -81,10 +81,14 @@ class _StartupSetupState extends State<StartupSetup>
           style: Theme.of(context).textTheme.headlineSmall),
       const SizedBox(height: 12),
       Text(!installed
-          ? 'Drag Comfer Wallpaper into Applications, then open that copy to finish setup.'
+          ? (widget.startup.linux != null
+              ? 'Move the complete Linux bundle to a permanent directory, then open that copy to enable login startup. You can continue without startup now.'
+              : 'Drag Comfer Wallpaper into Applications, then open that copy to finish setup.')
           : approval
               ? 'macOS needs your approval. Enable Comfer in Login Items to start it automatically when you sign in.'
-              : 'Start Comfer when you sign in so your wallpaper keeps changing automatically. You can change this later in System Settings → General → Login Items.'),
+              : (widget.startup.linux != null
+                  ? 'Start Comfer when you sign in. You can disable it later in Startup Applications or with --disable-startup.'
+                  : 'Start Comfer when you sign in so your wallpaper keeps changing automatically. You can change this later in System Settings → General → Login Items.')),
       const SizedBox(height: 12),
       const Text(
           'Comfer lives in your menu bar. Use its icon to change the wallpaper, choose Hourly or Daily, or quit.'),
@@ -96,6 +100,10 @@ class _StartupSetupState extends State<StartupSetup>
                 style: TextStyle(color: Theme.of(context).colorScheme.error))),
       ],
       const SizedBox(height: 20),
+      if (!installed && widget.startup.linux != null)
+        TextButton(
+            onPressed: _busy ? null : () => _perform(_finish),
+            child: const Text('Not now')),
       if (!installed)
         FilledButton(
             onPressed: _busy ? null : widget.onQuit,

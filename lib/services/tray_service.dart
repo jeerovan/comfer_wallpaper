@@ -11,6 +11,7 @@ class TrayService with TrayListener {
   final Future<void> Function() showFallback;
   Future<void> _updates = Future.value();
   bool _closed = false;
+  bool _initialized = false;
   Future<void> initialize() async {
     trayManager.addListener(this);
     await trayManager.setIcon(Platform.isWindows
@@ -18,6 +19,37 @@ class TrayService with TrayListener {
         : 'assets/comfer_launcher.png');
     await _render();
     controller.addListener(_refresh);
+    _initialized = true;
+  }
+
+  Future<bool> usable() async {
+    if (!_initialized || _closed) return false;
+    if (!Platform.isLinux) return true;
+    try {
+      final process = await Process.start('gdbus', [
+        'call',
+        '--session',
+        '--dest',
+        'org.kde.StatusNotifierWatcher',
+        '--object-path',
+        '/StatusNotifierWatcher',
+        '--method',
+        'org.freedesktop.DBus.Properties.Get',
+        'org.kde.StatusNotifierWatcher',
+        'IsStatusNotifierHostRegistered',
+      ]);
+      final output = process.stdout.transform(systemEncoding.decoder).join();
+      final errors = process.stderr.drain<void>();
+      final code = await process.exitCode.timeout(const Duration(seconds: 2),
+          onTimeout: () {
+        process.kill();
+        return -1;
+      });
+      await errors;
+      return code == 0 && (await output).contains('<true>');
+    } catch (_) {
+      return false;
+    }
   }
 
   void _refresh() {

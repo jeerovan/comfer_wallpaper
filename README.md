@@ -52,13 +52,51 @@ Uninstall preserves application data so the desktop never points to a deleted wa
 
 ## Windows and Linux
 
-Platform adapters and per-user installation scripts are included, but their native builds and installers have **not been verified on Windows/Linux in this macOS implementation session**.
+Windows native validation remains outstanding. Linux validation on the detected GNOME machine is recorded below.
 
 **Windows:** build with `flutter build windows --release`; run `packaging/windows/install.ps1` from the repository root. The script installs into LocalAppData and registers the executable in the current user's Run key. `uninstall.ps1` removes the app and startup entry, preserving data. The wallpaper setter uses the Win32 API directly and checks its return value.
 
-**Linux:** build with `flutter build linux --release`; run `bash packaging/linux/install.sh`. Startup uses the user's XDG autostart directory. `uninstall.sh` removes the installed bundle and launch entries, preserving preferences and the active wallpaper. The current adapter targets GNOME with both light/dark wallpaper settings and uses the existing graphical-session environment without sudo. KDE and other desktop adapters remain future work. GNOME needs a functioning AppIndicator host/extension; tray_manager 0.5.1 also requires its AppIndicator native library. Linux keeps the fallback controls visible because creating an indicator alone does not prove the shell displays it.
+**Linux:** build with `flutter build linux --release`; run `bash packaging/linux/install.sh`. Startup uses the user's XDG autostart directory. `uninstall.sh` removes the installed bundle and launch entries, preserving preferences and the active wallpaper. The current adapter targets GNOME with both light/dark wallpaper settings and uses the existing graphical-session environment without sudo. KDE and other desktop adapters remain future work. GNOME needs a functioning AppIndicator host/extension; tray_manager 0.5.1 also requires its AppIndicator native library. Linux starts hidden after setup only when a session tray host is available. Missing tray support or an unsupported desktop keeps an accessible control window visible with a persistent explanation; wallpaper errors do not erase that explanation.
 
 These are interactive desktop agents, not machine-level services. They need a logged-in graphical session.
+
+## Linux implementation status and setup
+
+The Linux work was checked against `Plan-Improve.md`. Its section 2 describes the older downloader implementation; the controller, journal, deadline scheduler and tray now replace that design. The original Linux-only scope takes precedence over the plan's cross-platform packaging and KDE release targets. KDE is still unsupported, and no installer/release package was created.
+
+Verified host: **Debian 12, x86-64, GNOME 43.9, Wayland**, Flutter 3.41.9 / Dart 3.11.5, Clang 14, GTK 3.24.38 and Ayatana AppIndicator 0.5.90. No OS upgrade was needed. GNOME X11 uses the same adapter but is untested. Other desktops/architectures and native macOS/Windows builds remain unverified. Both GNOME light/dark background keys must be writable. Missing native libraries prevent launch; missing shell tray support instead shows fallback controls.
+
+Debian build dependencies: `clang cmake ninja-build pkg-config libgtk-3-dev libayatana-appindicator3-dev`. Runtime dependencies include GTK 3, GLib/GIO (`libglib2.0-bin` supplies `gsettings` and `gdbus`), GNOME background schemas/dconf, `libayatana-appindicator3-1`, its DBusMenu libraries, and CA certificates. GNOME needs an AppIndicator shell extension for the tray; this machine has `ubuntu-appindicators@ubuntu.com`.
+
+```sh
+flutter pub get
+flutter analyze
+flutter test
+flutter build linux --release
+./build/linux/x64/release/bundle/comfer_wallpaper --show
+# For login startup, quit Comfer and copy the COMPLETE bundle to a stable path:
+mkdir -p "$HOME/.local/opt/comfer-wallpaper"
+cp -a build/linux/x64/release/bundle/. "$HOME/.local/opt/comfer-wallpaper/"
+"$HOME/.local/opt/comfer-wallpaper/comfer_wallpaper"
+```
+
+First launch offers **Start at login** or **Not now**, and remembers the choice. Build/temporary copies cannot register startup. The per-user entry is `${XDG_CONFIG_HOME:-$HOME/.config}/autostart/com.jeerovan.comfer.desktop`. Its quoted absolute executable path supports spaces and does not use sudo or a shell. `--startup-status`, `--enable-startup`, and `--disable-startup` explicitly manage registration; these commands still need a graphical session for the GTK runner. Normal launches respect deleted entries, `Hidden=true` and `X-GNOME-Autostart-enabled=false`.
+
+Upgrades at the same executable path preserve startup/preferences. After moving the whole bundle, run the new executable with `--enable-startup` only if wanted; it replaces the same entry rather than duplicating it. Quit stops the process without restarting it. The next enabled login can start it again. `--show` applies to a stopped app; duplicate launches exit rather than forwarding commands.
+
+Writable data lives separately under `${XDG_DATA_HOME:-$HOME/.local/share}/com.example.comfer_wallpaper/`, including preferences, wallpaper journal/images, lock and bounded logs. The path-provider plugin may retain a legacy `comfer_wallpaper/` directory. Keep the signed-in graphical session's XDG/dconf environment intact.
+
+Uninstall a manually copied bundle after Quit: run its executable with `--disable-startup`, remove the per-user autostart entry, then remove only the installed bundle directory. Preserve wallpaper/application data until another wallpaper is selected. The existing helper's uninstall command handles its own different bundle location and refuses to remove a running copy.
+
+Validation: analysis, 30 unit/widget tests and the Linux release build pass. Earlier native integration tests verified tray/frequency and reversible wallpaper replacement; the compiled runtime harness verifies real API replacements/cleanup, native DBusMenu actions, checked frequency and persistence, hidden startup, fallback accessibility, duplicate prevention, Quit, and startup registration/relocation/removal outside the repository. A separate helper regression verifies running-process guards, disabled-startup preservation and uninstall data preservation.
+
+```sh
+flutter test integration_test/desktop_test.dart -d linux
+/usr/bin/python3 integration_test/linux_runtime_test.py build/linux/x64/release/bundle
+/usr/bin/python3 integration_test/linux_helpers_test.py
+```
+
+The runtime harness requires `python3-gi` and AT-SPI introspection, temporarily changes wallpaper, isolates application data, and restores original GNOME settings. Actual logout/login, physical suspend/resume, physical mouse/keyboard tray interaction, and other desktop/session combinations remain untested. Sleep/retry behavior has deterministic scheduler coverage. Native actions are tested through DBusMenu, not simulated mouse clicks.
 
 ## Storage, recovery, and diagnostics
 
@@ -92,7 +130,7 @@ flutter build macos --release
 
 The native test temporarily applies two fixture wallpapers, verifies cleanup, and restores the original; it refuses to run if the starting wallpaper file is unavailable. It also creates a real status-bar item and verifies persisted frequency selection. Unit tests cover successful replacement, failed HTTP/apply/image validation, overlapping requests, recovery, invalid paths/symlinks, missing current files, scheduler boundaries, retry timing, and preference failure. Setup tests cover enabling, declining, duplicate-click prevention, approval, retry, uninstalled copies, and respecting previous decisions.
 
-Implementation phases completed on macOS: managed replacement/recovery, persistent scheduling, background engine/tray lifecycle, and installation scripts. Native Windows/Linux builds, KDE support, full multi-display/Spaces coverage, login after reboot, and physical sleep/wake verification remain outside the checks performed on this host. Native menu mouse/keyboard interaction also needs manual verification if desktop automation is unavailable.
+Implementation phases completed on macOS: managed replacement/recovery, persistent scheduling, background engine/tray lifecycle, and installation scripts. Native Windows builds, KDE support, full multi-display/Spaces coverage, login after reboot, and physical sleep/wake verification remain outside the checks performed on this host. Native menu mouse/keyboard interaction also needs manual verification if desktop automation is unavailable.
 
 Verified on macOS 26.7 with Flutter 3.41.9 and Xcode 26.6:
 

@@ -1,3 +1,4 @@
+import 'linux_startup.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,12 +11,17 @@ class LoginStartupInfo {
 }
 
 class LoginStartup {
-  LoginStartup(this.preferences);
+  LoginStartup(this.preferences, {this.linux});
+  final LinuxStartup? linux;
   final SharedPreferences preferences;
   static const completionKey = 'login_setup_completed';
   static const channel = MethodChannel('comfer.jeerovan.com/wallpaper');
 
   Future<LoginStartupInfo> info() async {
+    if (linux != null) {
+      return LoginStartupInfo(
+          status: await linux!.enabled() ? 1 : 0, installed: linux!.installed);
+    }
     final value =
         await channel.invokeMapMethod<String, dynamic>('getLoginStartup');
     if (value == null) throw StateError('Startup status unavailable');
@@ -36,7 +42,9 @@ class LoginStartup {
     return true;
   }
 
-  Future<void> enable() => channel.invokeMethod<void>('enableLoginStartup');
+  Future<void> enable() => linux != null
+      ? linux!.enable()
+      : channel.invokeMethod<void>('enableLoginStartup');
   Future<void> openSettings() =>
       channel.invokeMethod<void>('openLoginSettings');
 

@@ -23,6 +23,12 @@ class Desktop implements WallpaperPlatform {
   }
 }
 
+class AllSettingsDesktop extends Desktop implements WallpaperConfirmation {
+  @override
+  bool confirms(Set<String> paths, String candidate) =>
+      paths.length == 1 && paths.contains(candidate);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory directory;
@@ -117,6 +123,28 @@ void main() {
     expect(store.current, candidate);
     expect(store.pending, isNull);
     expect(await store.file(old).exists(), isFalse);
+  });
+  test('partial multi-setting apply is completed before recovery cleanup',
+      () async {
+    await service.change();
+    final old = store.current!;
+    const candidate = 'comfer-interrupted.jpg';
+    await store.track(candidate);
+    await store.file(candidate).writeAsString('image');
+    await store.begin(candidate);
+    final partial = AllSettingsDesktop()
+      ..paths = {store.file(old).path, store.file(candidate).path};
+    final recovering = WallpaperService(
+        store: store,
+        platform: partial,
+        userId: 'unused',
+        client: MockClient((_) async => http.Response('', 500)));
+    await recovering.initialize();
+    expect(partial.applications, 1);
+    expect(store.current, candidate);
+    expect(store.owned, [candidate]);
+    expect(await store.file(old).exists(), false);
+    await recovering.close();
   });
   test('concurrent requests share one operation', () async {
     desktop.gate = Completer<void>();

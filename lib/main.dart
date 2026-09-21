@@ -10,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 import 'app_controller.dart';
 import 'platform/desktop_platform.dart';
 import 'platform/login_startup.dart';
+import 'platform/linux_startup.dart';
 import 'startup_setup.dart';
 import 'services/tray_service.dart';
 import 'services/wallpaper_scheduler.dart';
@@ -17,6 +18,27 @@ import 'services/wallpaper_service.dart';
 import 'services/wallpaper_store.dart';
 
 Future<void> main(List<String> arguments) async {
+  if (Platform.isLinux) {
+    try {
+      final startup = LinuxStartup();
+      if (arguments.contains('--startup-status')) {
+        stdout.writeln(await startup.enabled() ? 'enabled' : 'disabled');
+        exit(0);
+      }
+      if (arguments.contains('--disable-startup')) {
+        await startup.disable();
+        exit(0);
+      }
+      if (arguments.contains('--enable-startup')) {
+        await startup.enable();
+        exit(0);
+      }
+    } catch (error) {
+      stderr.writeln('Could not update login startup: $error');
+      exit(1);
+    }
+  }
+
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
   final support = await getApplicationSupportDirectory();
@@ -30,7 +52,9 @@ Future<void> main(List<String> arguments) async {
     exit(0);
   }
   final prefs = await SharedPreferences.getInstance();
-  final startup = Platform.isMacOS ? LoginStartup(prefs) : null;
+  final startup = (Platform.isMacOS || Platform.isLinux)
+      ? LoginStartup(prefs, linux: Platform.isLinux ? LinuxStartup() : null)
+      : null;
   final setupVisible = ValueNotifier(await startup?.needsSetup() ?? false);
   var userId = prefs.getString('user_id');
   if (userId == null || userId.isEmpty) {
@@ -39,10 +63,11 @@ Future<void> main(List<String> arguments) async {
       throw StateError('Cannot save identity');
     }
   }
+  final desktop = DesktopPlatform();
   final controller = AppController(
       WallpaperService(
           store: WallpaperStore(Directory(p.join(support.path, 'wallpapers'))),
-          platform: DesktopPlatform(),
+          platform: desktop,
           userId: userId,
           client: http.Client()),
       prefs);
@@ -72,6 +97,7 @@ Future<void> main(List<String> arguments) async {
   }
 
   Future<void> show() async {
+    if (Platform.isLinux) await windowManager.setSkipTaskbar(false);
     await windowManager.show();
     await windowManager.focus();
   }
@@ -81,13 +107,14 @@ Future<void> main(List<String> arguments) async {
     ProcessSignal.sigint.watch().listen((_) => unawaited(quit()));
   }
 
-  final lifecycle =
-      DesktopLifecycle(controller, quit, isSettingUp: () => setupVisible.value);
+  final lifecycle = DesktopLifecycle(controller, quit,
+      desktopSupported: desktop.supported,
+      isSettingUp: () => setupVisible.value);
   windowManager.addListener(lifecycle);
   WidgetsBinding.instance.addObserver(lifecycle);
   Future<void> finishSetup() async {
     setupVisible.value = false;
-    if (lifecycle.hasTray) await windowManager.hide();
+    if (lifecycle.canHide) await windowManager.hide();
   }
 
   runApp(ValueListenableBuilder<bool>(
@@ -108,19 +135,40 @@ Future<void> main(List<String> arguments) async {
       title: 'Comfer Wallpaper'));
   await windowManager.setPreventClose(true);
   await windowManager.hide();
+  void updateFallback() {
+    controller.setFallbackReason(!desktop.supported
+        ? 'This desktop is unsupported. Linux wallpaper changes require GNOME. You can still change frequency or quit here.'
+        : !lifecycle.hasTray
+            ? 'The tray icon is unavailable. Keep this window open to control Comfer.'
+            : null);
+  }
+
   try {
     tray = TrayService(controller, quit, show);
     await tray.initialize();
+    lifecycle.hasTray = await tray.usable();
+    updateFallback();
+    if (!lifecycle.canHide) await show();
   } catch (_) {
-    controller.error =
-        'The tray icon is unavailable. Keep this window open to control Comfer.';
     lifecycle.hasTray = false;
+    updateFallback();
     await show();
   }
-  // GTK may create an indicator without a shell displaying it. Keep a fallback.
-  if (Platform.isLinux || arguments.contains('--show')) {
-    lifecycle.hasTray = !Platform.isLinux;
+  if (arguments.contains('--show')) {
     await show();
+  }
+  if (Platform.isLinux) {
+    Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (quitting) {
+        timer.cancel();
+        return;
+      }
+      final usable = await tray?.usable() ?? false;
+      final wasHiddenEligible = lifecycle.canHide;
+      lifecycle.hasTray = usable;
+      updateFallback();
+      if (wasHiddenEligible && !lifecycle.canHide) await show();
+    });
   }
   if (setupVisible.value) await show();
   await controller.start();
@@ -130,14 +178,17 @@ Future<void> main(List<String> arguments) async {
 }
 
 class DesktopLifecycle with WindowListener, WidgetsBindingObserver {
-  DesktopLifecycle(this.controller, this.quit, {this.isSettingUp});
+  DesktopLifecycle(this.controller, this.quit,
+      {this.isSettingUp, this.desktopSupported = true});
+  final bool desktopSupported;
+  bool get canHide => hasTray && desktopSupported;
   final AppController controller;
   final Future<void> Function() quit;
   final bool Function()? isSettingUp;
   bool hasTray = true;
   @override
   void onWindowClose() {
-    if (hasTray && isSettingUp?.call() != true) {
+    if (canHide && isSettingUp?.call() != true) {
       windowManager.hide();
     } else {
       unawaited(quit());
@@ -169,16 +220,21 @@ class ComferApp extends StatelessWidget {
                       padding: const EdgeInsets.all(24),
                       child: ListenableBuilder(
                           listenable: controller,
-                          builder: (context, _) => Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                          builder: (context, _) => ListView(
                                 children: [
                                   Text('Comfer Wallpaper',
                                       style: Theme.of(context)
                                           .textTheme
                                           .headlineSmall),
                                   const SizedBox(height: 12),
+                                  if (controller.fallbackReason != null) ...[
+                                    Text(controller.fallbackReason!),
+                                    const SizedBox(height: 8),
+                                  ],
                                   Text(controller.error ??
-                                      'Wallpapers change automatically. Use the status-bar icon to control Comfer.'),
+                                      (controller.fallbackReason == null
+                                          ? 'Wallpapers change automatically. Use the status-bar icon to control Comfer.'
+                                          : 'Use the controls below.')),
                                   const SizedBox(height: 16),
                                   SegmentedButton<Frequency>(
                                       segments: const [
@@ -198,7 +254,7 @@ class ComferApp extends StatelessWidget {
                                           ? null
                                           : (values) =>
                                               controller.select(values.first)),
-                                  const Spacer(),
+                                  const SizedBox(height: 24),
                                   Row(children: [
                                     FilledButton(
                                         onPressed: controller.busy ||

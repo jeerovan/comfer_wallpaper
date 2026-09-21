@@ -24,6 +24,14 @@ class AppController extends ChangeNotifier {
   bool stopping = false;
   bool selecting = false;
   String? error;
+  String? _fallbackReason;
+  String? get fallbackReason => _fallbackReason;
+  void setFallbackReason(String? reason) {
+    if (_fallbackReason == reason) return;
+    _fallbackReason = reason;
+    notifyListeners();
+  }
+
   void Function(String)? log;
   Future<void> start() async {
     try {

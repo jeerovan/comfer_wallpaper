@@ -30,9 +30,13 @@ void main() {
     final tray = TrayService(controller, () async {}, () async {});
     try {
       await tray.initialize();
-      final bounds = await trayManager.getBounds();
-      expect(bounds, isNotNull);
-      expect(bounds!.width, greaterThan(0));
+      if (Platform.isLinux) {
+        expect(await tray.usable(), isTrue);
+      } else {
+        final bounds = await trayManager.getBounds();
+        expect(bounds, isNotNull);
+        expect(bounds!.width, greaterThan(0));
+      }
       await controller.select(Frequency.daily);
       await prefs.reload();
       expect(prefs.getString('frequency'), 'daily');
@@ -54,6 +58,14 @@ void main() {
       (_) async {
     final platform = DesktopPlatform();
     final original = await platform.currentPaths();
+    final linuxOriginal = <String, String>{};
+    if (Platform.isLinux) {
+      for (final key in ['picture-uri', 'picture-uri-dark']) {
+        final result = await Process.run(
+            'gsettings', ['get', 'org.gnome.desktop.background', key]);
+        linuxOriginal[key] = result.stdout.toString().trim();
+      }
+    }
     expect(original, isNotEmpty);
     expect(await File(original.first).exists(), isTrue,
         reason:
@@ -91,9 +103,17 @@ void main() {
     } finally {
       await service.close();
       // NSScreen order is preserved by the native adapter; first is primary.
-      await platform.apply(original.first);
+      if (Platform.isLinux) {
+        for (final entry in linuxOriginal.entries) {
+          final result = await Process.run('gsettings',
+              ['set', 'org.gnome.desktop.background', entry.key, entry.value]);
+          expect(result.exitCode, 0);
+        }
+      } else {
+        await platform.apply(original.first);
+      }
       for (var i = 0; i < 20; i++) {
-        if ((await platform.currentPaths()).contains(original.first)) {
+        if ((await platform.currentPaths()).containsAll(original)) {
           restored = true;
           break;
         }
