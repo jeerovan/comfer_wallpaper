@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/wallpaper_scheduler.dart';
 import 'services/wallpaper_service.dart';
@@ -61,7 +62,7 @@ class AppController extends ChangeNotifier {
         ? value.message
         : 'Could not change wallpaper. Check your connection or desktop settings; Comfer will retry.';
     log?.call(
-        'Wallpaper operation failed: ${value is StateError ? value.message : value.runtimeType}');
+        'Wallpaper operation failed: ${value is PlatformException ? '${value.code}: ${value.message}' : value is StateError ? value.message : value.runtimeType}');
     notifyListeners();
   }
 

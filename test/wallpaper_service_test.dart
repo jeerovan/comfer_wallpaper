@@ -189,6 +189,42 @@ void main() {
     await expectLater(service.change(), throwsStateError);
     expect(desktop.applications, 0);
   });
+  test(
+      'interrupted image stream preserves active image and removes partial file',
+      () async {
+    await service.change();
+    final previous = store.current;
+    final success = store.lastSuccess;
+    await service.close();
+    service = WallpaperService(
+      store: store,
+      platform: desktop,
+      userId: 'test',
+      client: MockClient.streaming((request, _) async {
+        if (request.url.path == '/api') {
+          return http.StreamedResponse(
+              Stream.value(utf8.encode(
+                  jsonEncode({'imageUrl': 'https://example.com/image.jpg'}))),
+              200);
+        }
+        return http.StreamedResponse(() async* {
+          yield [1, 2, 3];
+          throw const HttpException('Interrupted transfer');
+        }(), 200);
+      }),
+    );
+    await expectLater(service.change(), throwsA(isA<HttpException>()));
+    expect(store.current, previous);
+    expect(store.lastSuccess, success);
+    expect(store.owned, [previous]);
+    expect(
+        await directory
+            .list()
+            .where((file) => file.path.endsWith('.part'))
+            .isEmpty,
+        true);
+    expect(desktop.applications, 1);
+  });
   test('invalid image never replaces the working wallpaper', () async {
     await service.change();
     final previous = store.current;

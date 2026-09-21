@@ -16,10 +16,13 @@ class InstalledStartup extends LinuxStartup {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test('AppImage startup uses the stable outer file, not the mount path', () {
-    final startup = LinuxStartup(environment: {
-      'APPIMAGE': '/home/test/Applications/Comfer Wallpaper.AppImage',
-      'APPDIR': '/tmp/.mount_comfer',
-    }, resolvedExecutable: '/tmp/.mount_comfer/usr/bin/comfer_wallpaper');
+    final startup = LinuxStartup(
+        configHome: '/home/test/.config',
+        environment: {
+          'APPIMAGE': '/home/test/Applications/Comfer Wallpaper.AppImage',
+          'APPDIR': '/tmp/.mount_comfer',
+        },
+        resolvedExecutable: '/tmp/.mount_comfer/usr/bin/comfer_wallpaper');
     expect(startup.executable,
         '/home/test/Applications/Comfer Wallpaper.AppImage');
     expect(

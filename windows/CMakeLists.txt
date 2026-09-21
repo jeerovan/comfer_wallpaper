@@ -81,6 +81,20 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
+# App-local Visual C++ runtime files supplied with the project. These binaries
+# are x64; never copy them into an ARM64 bundle or a Debug runtime build.
+if(CMAKE_GENERATOR_PLATFORM STREQUAL "x64")
+  install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/dlls/msvcp140.dll"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dlls/msvcp140_1.dll"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dlls/msvcp140_2.dll"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dlls/vcruntime140.dll"
+    "${CMAKE_CURRENT_SOURCE_DIR}/dlls/vcruntime140_1.dll"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    CONFIGURATIONS Profile;Release
+    COMPONENT Runtime)
+endif()
+
 if(PLUGIN_BUNDLED_LIBRARIES)
   install(FILES "${PLUGIN_BUNDLED_LIBRARIES}"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"

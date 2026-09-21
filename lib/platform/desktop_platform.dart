@@ -44,8 +44,9 @@ class DesktopPlatform implements WallpaperPlatform, WallpaperConfirmation {
   }
 
   @override
-  bool confirms(Set<String> paths, String candidate) =>
-      paths.contains(candidate) && (!Platform.isLinux || paths.length == 1);
+  bool confirms(Set<String> paths, String candidate) => Platform.isWindows
+      ? paths.isNotEmpty && paths.first == candidate
+      : paths.contains(candidate) && (!Platform.isLinux || paths.length == 1);
 
   @override
   Future<Set<String>> currentPaths() async {

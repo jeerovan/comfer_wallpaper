@@ -22,7 +22,7 @@ Comfer runs in the signed-in user's graphical session; it is not a machine-level
 
 - **macOS:** open the installed app from Applications. First-launch setup offers **Start at login** or **Not now**; macOS may require approval in Login Items.
 - **Linux:** the wallpaper adapter targets GNOME. First launch offers login startup from a stable installed path. Missing tray support or an unsupported desktop keeps a control window visible with an explanation. KDE is not currently supported.
-- **Windows:** the existing per-user installation helper registers login startup. Native Windows validation remains outstanding.
+- **Windows:** the per-user installer registers login startup, preserves disabled startup on upgrades, and adds an Installed Apps uninstall entry. Wallpaper changes target the primary monitor; files used by other monitors remain protected. See the [Windows release instructions](Release.md#windows-build-and-installation).
 
 The release guide contains [Linux setup and uninstall instructions](Release.md#startup-upgrades-and-uninstall), [AppImage usage](Release.md#build-an-x86-64-appimage), and [macOS installation/startup commands](Release.md#macos-build-and-installation-macos-13). Quit before replacing or removing application binaries. Preserve the active wallpaper data when uninstalling.
 

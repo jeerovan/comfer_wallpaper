@@ -83,6 +83,7 @@ Future<void> main(List<String> arguments) async {
     } catch (_) {/* Logging cannot stop the wallpaper service. */}
   };
   var quitting = false;
+  controller.log?.call('Startup: preferences and controller ready');
   TrayService? tray;
   Future<void> quit() async {
     if (quitting) return;
@@ -97,9 +98,20 @@ Future<void> main(List<String> arguments) async {
   }
 
   Future<void> show() async {
-    if (Platform.isLinux) await windowManager.setSkipTaskbar(false);
+    if (Platform.isLinux || Platform.isWindows) {
+      await windowManager.setSkipTaskbar(false);
+    }
     await windowManager.show();
     await windowManager.focus();
+  }
+
+  if (Platform.isWindows) {
+    DesktopPlatform.channel.setMethodCallHandler((call) async {
+      if (call.method == 'quitRequested') await quit();
+      if (call.method == 'resume') controller.scheduler.reconcile();
+    });
+    await DesktopPlatform.channel.invokeMethod<void>('controllerReady');
+    controller.log?.call('Startup: Windows lifecycle ready');
   }
 
   if (!Platform.isWindows) {
@@ -133,6 +145,7 @@ Future<void> main(List<String> arguments) async {
       center: true,
       skipTaskbar: true,
       title: 'Comfer Wallpaper'));
+  controller.log?.call('Startup: window ready');
   await windowManager.setPreventClose(true);
   await windowManager.hide();
   void updateFallback() {
@@ -146,6 +159,7 @@ Future<void> main(List<String> arguments) async {
   try {
     tray = TrayService(controller, quit, show);
     await tray.initialize();
+    controller.log?.call('Startup: tray initialized');
     lifecycle.hasTray = await tray.usable();
     updateFallback();
     if (!lifecycle.canHide) await show();
@@ -156,6 +170,7 @@ Future<void> main(List<String> arguments) async {
   }
   if (arguments.contains('--show')) {
     await show();
+    controller.log?.call('Startup: control window shown');
   }
   if (Platform.isLinux) {
     Timer.periodic(const Duration(seconds: 5), (timer) async {
@@ -172,6 +187,7 @@ Future<void> main(List<String> arguments) async {
   }
   if (setupVisible.value) await show();
   await controller.start();
+  controller.log?.call('Startup: scheduler started');
   if (arguments.contains('--change-now')) {
     await controller.scheduler.changeNow();
   }

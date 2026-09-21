@@ -1,6 +1,7 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
+#include <algorithm>
 
 #include "flutter_window.h"
 #include "utils.h"
@@ -24,12 +25,20 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
 
+  if (std::find(command_line_arguments.begin(), command_line_arguments.end(),
+                "--quit") != command_line_arguments.end()) {
+    HWND running = FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", L"Comfer Wallpaper");
+    const bool sent = !running || PostMessageW(running, WM_APP + 73, 0, 0);
+    ::CoUninitialize();
+    return sent ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
+
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);
   Win32Window::Point origin(100, 100);
   Win32Window::Size size(480, 512);
-  if (!window.Create(L"comfer_wallpaper", origin, size))
+  if (!window.Create(L"Comfer Wallpaper", origin, size))
   {
     return EXIT_FAILURE;
   }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -18,6 +19,41 @@ import 'package:tray_manager/tray_manager.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets('Windows quit command reaches the application controller',
+      (_) async {
+    if (!Platform.isWindows) return;
+    final requested = Completer<void>();
+    DesktopPlatform.channel.setMethodCallHandler((call) async {
+      if (call.method == 'quitRequested' && !requested.isCompleted) {
+        requested.complete();
+      }
+    });
+    try {
+      await DesktopPlatform.channel.invokeMethod<void>('controllerReady');
+      final result = await Process.run(Platform.resolvedExecutable, ['--quit']);
+      expect(result.exitCode, 0);
+      await requested.future.timeout(const Duration(seconds: 10));
+    } finally {
+      DesktopPlatform.channel.setMethodCallHandler(null);
+    }
+  });
+  testWidgets('Windows rejects invalid native paths without changing wallpaper',
+      (_) async {
+    if (!Platform.isWindows) return;
+    final desktop = DesktopPlatform();
+    final before = await desktop.currentPaths();
+    for (final arguments in [
+      null,
+      {'path': ''},
+      {'path': 'bad\u0000path'},
+      {'path': r'C:\comfer-missing-fixture\missing.jpg'}
+    ]) {
+      await expectLater(
+          DesktopPlatform.channel.invokeMethod<bool>('setWallpaper', arguments),
+          throwsA(isA<PlatformException>()));
+      expect(await desktop.currentPaths(), before);
+    }
+  });
   testWidgets('native status item and persistent frequency', (_) async {
     final prefs = await SharedPreferences.getInstance();
     final previous = prefs.getString('frequency');

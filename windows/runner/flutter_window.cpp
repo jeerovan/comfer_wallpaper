@@ -1,4 +1,5 @@
 #include "flutter_window.h"
+#include "wallpaper_adapter.h"
 
 #include <optional>
 #include <flutter/standard_method_codec.h>
@@ -29,43 +30,20 @@ bool FlutterWindow::OnCreate() {
   wallpaper_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
       flutter_controller_->engine()->messenger(), "comfer.jeerovan.com/wallpaper",
       &flutter::StandardMethodCodec::GetInstance());
-  wallpaper_channel_->SetMethodCallHandler([](const auto& call, auto result) {
-    if (call.method_name() == "getWallpaperPaths") {
-      wchar_t path[32768] = {};
-      if (!SystemParametersInfoW(SPI_GETDESKWALLPAPER, 32768, path, 0)) {
-        result->Error("READ_FAILED", "Could not read the desktop wallpaper");
-        return;
-      }
-      const int length = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
-      std::string utf8(length, '\0');
-      WideCharToMultiByte(CP_UTF8, 0, path, -1, utf8.data(), length, nullptr, nullptr);
-      if (!utf8.empty()) utf8.pop_back();
-      result->Success(flutter::EncodableValue(flutter::EncodableList{flutter::EncodableValue(utf8)}));
-    } else if (call.method_name() == "setWallpaper") {
-      const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
-      if (!args) { result->Error("INVALID_ARGUMENTS", "Missing wallpaper path"); return; }
-      const auto it = args->find(flutter::EncodableValue("path"));
-      const auto* path = it == args->end() ? nullptr : std::get_if<std::string>(&it->second);
-      if (!path) { result->Error("INVALID_ARGUMENTS", "Missing wallpaper path"); return; }
-      const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path->c_str(), -1, nullptr, 0);
-      if (!length) { result->Error("INVALID_PATH", "Invalid UTF-8 path"); return; }
-      std::wstring wide(length, L'\0');
-      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path->c_str(), -1, wide.data(), length);
-      if (!SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wide.data(), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)) {
-        result->Error("APPLY_FAILED", "Windows refused the wallpaper"); return;
-      }
-      result->Success(flutter::EncodableValue(true));
-    } else {
-      result->NotImplemented();
+  wallpaper_channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() == "controllerReady") {
+      controller_ready_ = true;
+      result->Success();
+      if (quit_requested_) wallpaper_channel_->InvokeMethod("quitRequested", nullptr);
+      return;
     }
+    HandleWallpaperCall(call, std::move(result));
   });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   // The controller explicitly shows a window only for a fallback/error.
 
-  // Flutter can complete the first frame before the "show window" callback is
-  // registered. The following call ensures a frame is pending to ensure the
-  // window is shown. It is a no-op if the first frame hasn't completed yet.
+  // Render the Flutter engine while leaving the native window hidden.
   flutter_controller_->ForceRedraw();
 
   return true;
@@ -95,6 +73,15 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_APP + 73:
+      quit_requested_ = true;
+      if (controller_ready_) wallpaper_channel_->InvokeMethod("quitRequested", nullptr);
+      return 0;
+    case WM_POWERBROADCAST:
+      if (wparam == PBT_APMRESUMEAUTOMATIC && controller_ready_) {
+        wallpaper_channel_->InvokeMethod("resume", nullptr);
+      }
+      break;
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;

@@ -14,6 +14,7 @@ class TrayService with TrayListener {
   bool _initialized = false;
   Future<void> initialize() async {
     trayManager.addListener(this);
+    // Windows requires the ICO version of the colored comfer_launcher.png.
     await trayManager.setIcon(Platform.isWindows
         ? 'assets/comfer_launcher.ico'
         : 'assets/comfer_launcher.png');

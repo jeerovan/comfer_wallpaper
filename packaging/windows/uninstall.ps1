@@ -1,6 +1,12 @@
 $ErrorActionPreference = 'Stop'
-if (Get-Process comfer_wallpaper -ErrorAction SilentlyContinue) { throw 'Quit Comfer before uninstalling.' }
-Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'ComferWallpaper' -ErrorAction SilentlyContinue
-$Target = Join-Path $env:LOCALAPPDATA 'Programs\ComferWallpaper'
-if (Test-Path $Target) { Remove-Item $Target -Recurse -Force }
-Write-Output 'Removed. The active wallpaper and preferences are preserved.'
+. (Join-Path $PSScriptRoot 'common.ps1')
+$Target = Get-ComferInstallDirectory
+Stop-Comfer $Target
+if (Test-Path -LiteralPath $Target) {
+    $links = Get-ChildItem -LiteralPath $Target -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }
+    if ($links) { throw 'The installation contains links; refusing recursive removal.' }
+    Remove-Item -LiteralPath $Target -Recurse -Force
+}
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'ComferWallpaper' -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ComferWallpaper' -ErrorAction SilentlyContinue
+Write-Output 'Removed Comfer and its login entry. Active wallpaper and preferences are preserved.'

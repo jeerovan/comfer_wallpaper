@@ -260,7 +260,7 @@ Uninstall preserves application data so the desktop never points to a deleted wa
 
 ## Windows build and installation
 
-Native Windows validation remains outstanding. Build on a Windows host:
+Build on Windows with Flutter and Visual Studio's Desktop development with C++ workload:
 
 ```powershell
 flutter pub get
@@ -268,7 +268,42 @@ flutter build windows --release
 .\packaging\windows\install.ps1
 ```
 
-The existing helper installs into LocalAppData and registers the executable in the current user's Run key. `packaging/windows/uninstall.ps1` removes the app and startup entry while preserving data. The wallpaper setter uses the Win32 API directly and checks its return value. This is an interactive signed-in-user application, not a Windows system service.
+The Windows CMake install step copies the five supplied x64 Visual C++ runtime DLLs from `windows/dlls/` beside `comfer_wallpaper.exe` for Release and Profile builds. Keep those files in the source checkout. Debug builds use the development toolchain runtime; ARM64 builds do not receive these x64 DLLs. Both the PowerShell installer and `exe.iss` include the resulting release-folder DLLs automatically.
+
+The per-user PowerShell installer copies the complete release bundle into `%LOCALAPPDATA%\Programs\ComferWallpaper`, registers a quoted `--background` command in the user's Run key, and adds **Comfer Wallpaper** to Windows Installed Apps. No administrator privileges are required. `-Source` selects another release bundle; `-NoLaunch` installs without starting it. Keep the entire bundle together when distributing it. This is an interactive signed-in-user application, not a Windows system service.
+
+Disable automatic startup through Windows Settings → Apps → Startup. Upgrades preserve Windows' disabled startup state and do not recreate a manually removed Run entry. Intentional Quit leaves login registration intact and never immediately restarts the process. Both mouse buttons open the notification icon's menu; failures are available through **Last change needs attention…**.
+
+If the app is running but its icon is missing, check the taskbar's hidden-icons menu. To keep it visible, open Settings → Personalization → Taskbar → Other system tray icons and turn on `comfer_wallpaper`. This controls icon visibility, independently of login startup. Launch with `--show` after quitting the existing instance to open the control window for troubleshooting. The application log includes startup milestones for the window, tray and scheduler.
+
+Install/upgrade and uninstall request graceful shutdown through `comfer_wallpaper.exe --quit`, wait for the owning process to exit, and refuse to replace/remove binaries on timeout. Older builds without this command must be quit through their tray menu first. Uninstall through Installed Apps or:
+
+```powershell
+.\packaging\windows\uninstall.ps1
+```
+
+Uninstall preserves preferences, the journal and current wallpaper in the application-support directory so Windows does not reference a deleted image. Installation rejects junctions/symlinks in managed paths. The installer is a script-based per-user package, not a signed MSI/EXE distributor.
+
+The native adapter uses [Microsoft's IDesktopWallpaper API](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-idesktopwallpaper), checks HRESULT failures, validates Unicode paths, and changes only the primary monitor. It reads all monitor paths before cleanup and confirms the primary path before committing success. Disconnected/secondary monitor references may retain extra managed images for safety. Multi-monitor hot-plug, virtual desktops, slideshow and remote-session combinations still need release smoke testing. The legacy Downloads-pointer PowerShell setter is removed.
+
+### Recorded Windows validation
+
+On 21 September 2026, with Flutter 3.41.6 / Dart 3.11.4:
+
+- Windows release compilation passed.
+- Unit/widget suite: 34 passed, one Linux-only test skipped. Coverage includes interrupted streamed downloads, primary-versus-secondary confirmation, Unicode paths and native error propagation.
+- Four native integration checks passed: graceful quit signaling, invalid-path rejection, tray/frequency persistence, and real replacement/cleanup with restoration of the original wallpaper. These temporarily change the desktop background.
+- Isolated PowerShell helper tests passed for installation, quoted startup commands, preserving removed startup entries on upgrade, uninstall registration and data preservation. Registry operations are mocked; these do not establish real login behavior.
+
+```powershell
+flutter analyze
+flutter test
+flutter test integration_test/desktop_test.dart -d windows
+pwsh -NoProfile -File integration_test/windows_helpers_test.ps1
+flutter build windows --release
+```
+
+Before distribution, manually verify the packaged first launch, hidden startup, duplicate launch, native menu keyboard/mouse actions, real install/upgrade/uninstall, logout/login, physical sleep/resume, and shutdown during a download. The automated checks do not establish those full end-to-end behaviors. Windows resume messages trigger reconciliation in addition to the deadline scheduler's periodic checks.
 
 ## Release validation and known limitations
 

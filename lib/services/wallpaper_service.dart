@@ -109,9 +109,8 @@ class WallpaperService {
     final part = 'comfer-$id.part';
     await store.track(part);
     try {
-      final bytes = await _read(imageUri, 30 * 1024 * 1024);
+      await _read(imageUri, 30 * 1024 * 1024, destination: store.file(part));
       if (_closed) throw StateError('Download cancelled');
-      await store.file(part).writeAsBytes(bytes, flush: true);
       final extension = await validate(store.file(part));
       final candidate = 'comfer-$id.$extension';
       await store.track(candidate);
@@ -148,14 +147,14 @@ class WallpaperService {
     return paths;
   }
 
-  Future<List<int>> _read(Uri uri, int maximum) async {
+  Future<List<int>> _read(Uri uri, int maximum, {File? destination}) async {
     final abort = Completer<void>();
     _abort = abort;
     final deadline = Timer(const Duration(minutes: 2), () {
       if (!abort.isCompleted) abort.complete();
     });
     try {
-      return await _readResponse(uri, maximum, abort.future);
+      return await _readResponse(uri, maximum, abort.future, destination);
     } finally {
       deadline.cancel();
       if (!abort.isCompleted) abort.complete();
@@ -164,7 +163,7 @@ class WallpaperService {
   }
 
   Future<List<int>> _readResponse(
-      Uri uri, int maximum, Future<void> abort) async {
+      Uri uri, int maximum, Future<void> abort, File? destination) async {
     final response = await client
         .send(http.AbortableRequest('GET', uri, abortTrigger: abort))
         .timeout(const Duration(seconds: 20));
@@ -177,15 +176,28 @@ class WallpaperService {
       throw const FormatException('Wallpaper response is too large');
     }
     final bytes = <int>[];
-    await for (final chunk
-        in response.stream.timeout(const Duration(seconds: 20))) {
-      if (_closed) throw StateError('Download cancelled');
-      if (bytes.length + chunk.length > maximum) {
-        throw const FormatException('Wallpaper response is too large');
+    RandomAccessFile? output;
+    var received = 0;
+    try {
+      output = await destination?.open(mode: FileMode.write);
+      await for (final chunk
+          in response.stream.timeout(const Duration(seconds: 20))) {
+        if (_closed) throw StateError('Download cancelled');
+        received += chunk.length;
+        if (received > maximum) {
+          throw const FormatException('Wallpaper response is too large');
+        }
+        if (output == null) {
+          bytes.addAll(chunk);
+        } else {
+          await output.writeFrom(chunk);
+        }
       }
-      bytes.addAll(chunk);
+      await output?.flush();
+    } finally {
+      await output?.close();
     }
-    if (bytes.isEmpty) {
+    if (received == 0) {
       throw const FormatException('Wallpaper response is empty');
     }
     return bytes;
