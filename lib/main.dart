@@ -1,300 +1,188 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:comfer_wallpaper/downloader.dart';
-import 'package:comfer_wallpaper/service_logger.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:window_manager/window_manager.dart';
-import 'package:tray_manager/tray_manager.dart';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'package:window_manager/window_manager.dart';
+import 'app_controller.dart';
+import 'platform/desktop_platform.dart';
+import 'services/tray_service.dart';
+import 'services/wallpaper_scheduler.dart';
+import 'services/wallpaper_service.dart';
+import 'services/wallpaper_store.dart';
 
-void main() async {
-  // Ensure Flutter bindings are initialized before using plugins.
+Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
-
   await windowManager.ensureInitialized();
+  final support = await getApplicationSupportDirectory();
+  await support.create(recursive: true);
+  final lock = await File(p.join(support.path, 'instance.lock'))
+      .open(mode: FileMode.append);
+  try {
+    await lock.lock(FileLock.exclusive);
+  } on FileSystemException {
+    await lock.close();
+    exit(0);
+  }
+  final prefs = await SharedPreferences.getInstance();
+  var userId = prefs.getString('user_id');
+  if (userId == null || userId.isEmpty) {
+    userId = const Uuid().v4();
+    if (!await prefs.setString('user_id', userId)) {
+      throw StateError('Cannot save identity');
+    }
+  }
+  final controller = AppController(
+      WallpaperService(
+          store: WallpaperStore(Directory(p.join(support.path, 'wallpapers'))),
+          platform: DesktopPlatform(),
+          userId: userId,
+          client: http.Client()),
+      prefs);
+  final logFile = File(p.join(support.path, 'comfer.log'));
+  controller.log = (message) {
+    try {
+      if (logFile.existsSync() && logFile.lengthSync() > 256 * 1024) {
+        logFile.renameSync('${logFile.path}.previous');
+      }
+      logFile.writeAsStringSync(
+          '${DateTime.now().toUtc().toIso8601String()} $message\n',
+          mode: FileMode.append);
+    } catch (_) {/* Logging cannot stop the wallpaper service. */}
+  };
+  var quitting = false;
+  TrayService? tray;
+  Future<void> quit() async {
+    if (quitting) return;
+    quitting = true;
+    await controller.close();
+    try {
+      await tray?.close();
+    } finally {
+      await lock.close();
+      exit(0);
+    }
+  }
 
-  WindowOptions windowOptions = WindowOptions(
-    size: Size(480, 512),
-    minimumSize: Size(480, 512),
-    center: true,
-    title: "Comfer Wallpaper",
-    //backgroundColor: Colors.transparent,
-    //skipTaskbar: false,
-    //titleBarStyle: TitleBarStyle.hidden,
-  );
-  windowManager.waitUntilReadyToShow(windowOptions, () async {
+  Future<void> show() async {
     await windowManager.show();
     await windowManager.focus();
-    if (Platform.isWindows) {
-      await windowManager
-          .setPreventClose(true); // Prevents closing the app completely
-    }
-  });
-  runApp(const MyApp());
-}
+  }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  if (!Platform.isWindows) {
+    ProcessSignal.sigterm.watch().listen((_) => unawaited(quit()));
+    ProcessSignal.sigint.watch().listen((_) => unawaited(quit()));
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Comfer Wallpaper',
-      theme: ThemeData(
-        primarySwatch: Colors.red,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF1E1E1E),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blueAccent,
-            foregroundColor: Colors.white,
-          ),
-        ),
-      ),
-      home: const HomeScreen(),
-      debugShowCheckedModeBanner: false,
-    );
+  final lifecycle = DesktopLifecycle(controller, quit);
+  windowManager.addListener(lifecycle);
+  WidgetsBinding.instance.addObserver(lifecycle);
+  runApp(ComferApp(controller: controller, quit: quit));
+  await windowManager.waitUntilReadyToShow(const WindowOptions(
+      size: Size(440, 340),
+      minimumSize: Size(400, 320),
+      center: true,
+      skipTaskbar: true,
+      title: 'Comfer Wallpaper'));
+  await windowManager.setPreventClose(true);
+  await windowManager.hide();
+  try {
+    tray = TrayService(controller, quit, show);
+    await tray.initialize();
+  } catch (_) {
+    controller.error =
+        'The tray icon is unavailable. Keep this window open to control Comfer.';
+    lifecycle.hasTray = false;
+    await show();
+  }
+  // GTK may create an indicator without a shell displaying it. Keep a fallback.
+  if (Platform.isLinux || arguments.contains('--show')) {
+    lifecycle.hasTray = !Platform.isLinux;
+    await show();
+  }
+  await controller.start();
+  if (arguments.contains('--change-now')) {
+    await controller.scheduler.changeNow();
   }
 }
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+class DesktopLifecycle with WindowListener, WidgetsBindingObserver {
+  DesktopLifecycle(this.controller, this.quit);
+  final AppController controller;
+  final Future<void> Function() quit;
+  bool hasTray = true;
+  @override
+  void onWindowClose() {
+    if (hasTray) {
+      windowManager.hide();
+    } else {
+      unawaited(quit());
+    }
+  }
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) controller.scheduler.reconcile();
+  }
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with WindowListener, TrayListener {
-  final AppLogger logger = AppLogger(prefixes: ["Home"]);
-  bool _hideOnClose = false;
-  bool _canChange = true;
-  Timer? _changeTimer;
-  Timer? _countdownTimer;
-  int _remainingSeconds = 0;
-
+class ComferApp extends StatelessWidget {
+  const ComferApp({super.key, required this.controller, required this.quit});
+  final AppController controller;
+  final Future<void> Function() quit;
   @override
-  void initState() {
-    super.initState();
-    checkSetUserId();
-    _loadHideOnClose();
-    _initTray();
-    windowManager.addListener(this);
-    // Start downloader timer
-    Timer(Duration(seconds: 5), () {
-      Downloader().startTimer();
-    });
-  }
-
-  @override
-  void onWindowClose() async {
-    windowManager.hide();
-  }
-
-  @override
-  void onTrayIconMouseDown() {
-    _showWindow();
-  }
-
-  Future<void> checkSetUserId() async {
-    final prefs = await SharedPreferences.getInstance();
-    String? userId = prefs.getString("user_id");
-    if (userId == null) {
-      String uuid = Uuid().v4(); // Generates a random UUID (v4)
-      await prefs.setString("user_id", uuid);
-    }
-  }
-
-  Future<void> _loadHideOnClose() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _hideOnClose = prefs.getBool('hide_on_close') ?? false;
-    });
-    windowManager.setPreventClose(_hideOnClose);
-  }
-
-  Future<void> _saveHideOnClose(bool? newValue) async {
-    if (newValue == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('hide_on_close', newValue);
-    setState(() {
-      _hideOnClose = newValue;
-      windowManager.setPreventClose(newValue);
-    });
-  }
-
-  Future<void> _initTray() async {
-    trayManager.addListener(this);
-    await trayManager.setIcon(
-      Platform.isWindows
-          ? 'assets/comfer_launcher.ico'
-          : 'assets/comfer_launcher.png',
-    ); // Set tray icon
-    if (!Platform.isLinux) {
-      await trayManager.setToolTip("Comfer Wallpaper"); // Tooltip
-    }
-    await trayManager.setContextMenu(
-      Menu(
-        items: [
-          MenuItem(label: "Show App", onClick: (menuItem) => _showWindow()),
-          MenuItem(label: "Quit", onClick: (menuItem) => _exitApp()),
-        ],
-      ),
-    );
-  }
-
-  void _changeWallpaper() {
-    if (!_canChange) return;
-
-    _canChange = false;
-    _remainingSeconds = 60;
-
-    // Start a periodic timer to count down the seconds
-    _countdownTimer?.cancel();
-    _countdownTimer = Timer.periodic(Duration(seconds: 1), (timer) {
-      if (_remainingSeconds > 0) {
-        setState(() {
-          _remainingSeconds--;
-        });
-      } else {
-        timer.cancel();
-      }
-    });
-
-    // Start the overall timer for timeout (re-enables button after 60s)
-    _changeTimer?.cancel();
-    _changeTimer = Timer(Duration(seconds: 60), () {
-      setState(() {
-        _canChange = true;
-        _remainingSeconds = 0;
-      });
-    });
-    Downloader().downloadAndSetWallpaper();
-  }
-
-  void _showWindow() {
-    windowManager.show(); // Restore window
-    windowManager.focus();
-  }
-
-  void _exitApp() {
-    trayManager.destroy();
-    windowManager.destroy();
-  }
-
-  @override
-  void onTrayIconRightMouseDown() {
-    trayManager.popUpContextMenu();
-  }
-
-  // Function to launch the website URL.
-  void _launchURL() async {
-    final Uri url = Uri.parse('https://comfer.jeerovan.com');
-    if (!await launchUrl(url)) {
-      // You can show a snackbar or dialog if the URL fails to launch
-      logger.error('Could not launch $url');
-    }
-  }
-
-  @override
-  void dispose() {
-    Downloader().stopTimer();
-    _changeTimer?.cancel();
-    _countdownTimer?.cancel();
-    trayManager.removeListener(this);
-    windowManager.removeListener(this);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              // Use a Spacer to push content to the center, leaving top space.
-              const Spacer(),
-
-              // Icon at the top
-              Image.asset(
-                'assets/comfer_launcher.png',
-                width: 64.0,
-                height: 64.0,
-              ),
-              const SizedBox(height: 16.0),
-
-              // App Name
-              const Text(
-                'Comfer Wallpaper',
-                style: TextStyle(
-                  fontSize: 24.0,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 48.0),
-              if (Platform.isLinux)
-                Center(
-                  child: ListTile(
-                    leading: const Icon(Icons.close, color: Colors.grey),
-                    title: const Text("Hide on close"),
-                    subtitle: const Text("If you see icon in system tray"),
-                    trailing: Transform.scale(
-                      scale: 0.7,
-                      child: Switch(
-                          value: _hideOnClose, onChanged: _saveHideOnClose),
-                    ),
-                    horizontalTitleGap: 16.0,
-                  ),
-                ),
-              const SizedBox(height: 32.0),
-
-              // "Change now" button
-              ElevatedButton(
-                onPressed: _canChange ? _changeWallpaper : null,
-                style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                  textStyle: const TextStyle(fontSize: 16),
-                ),
-                child: Text(_canChange
-                    ? 'Change Now'
-                    : 'Try again in $_remainingSeconds s'),
-              ),
-
-              // Use a Spacer to push the footer to the bottom.
-              const Spacer(),
-
-              // "Powered by" footer link
-              InkWell(
-                onTap: _launchURL,
-                borderRadius: BorderRadius.circular(8.0),
+  Widget build(BuildContext context) => MaterialApp(
+        title: 'Comfer Wallpaper',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+            colorSchemeSeed: const Color(0xff486b58), useMaterial3: true),
+        home: Scaffold(
+            body: SafeArea(
                 child: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.flash_on, size: 16.0, color: Colors.amber),
-                      SizedBox(width: 8.0),
-                      Text(
-                        'Powered by Comfer Launcher',
-                        style: TextStyle(
-                          fontSize: 12.0,
-                          color: Colors.grey,
-                        ),
-                      ),
+          padding: const EdgeInsets.all(24),
+          child: ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Comfer Wallpaper',
+                          style: Theme.of(context).textTheme.headlineSmall),
+                      const SizedBox(height: 12),
+                      Text(controller.error ??
+                          'Wallpapers change automatically. Use the status-bar icon to control Comfer.'),
+                      const SizedBox(height: 16),
+                      SegmentedButton<Frequency>(
+                          segments: const [
+                            ButtonSegment(
+                                value: Frequency.hourly, label: Text('Hourly')),
+                            ButtonSegment(
+                                value: Frequency.daily, label: Text('Daily')),
+                          ],
+                          selected: {
+                            controller.scheduler.frequency
+                          },
+                          onSelectionChanged: controller.selecting ||
+                                  controller.stopping
+                              ? null
+                              : (values) => controller.select(values.first)),
+                      const Spacer(),
+                      Row(children: [
+                        FilledButton(
+                            onPressed: controller.busy || controller.stopping
+                                ? null
+                                : controller.scheduler.changeNow,
+                            child: Text(
+                                controller.busy ? 'Changing…' : 'Change now')),
+                        const Spacer(),
+                        TextButton(
+                            onPressed: controller.stopping ? null : quit,
+                            child: const Text('Quit'))
+                      ]),
                     ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+                  )),
+        ))),
+      );
 }

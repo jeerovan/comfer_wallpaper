@@ -2,49 +2,49 @@ import Cocoa
 import FlutterMacOS
 
 class MainFlutterWindow: NSWindow {
-  override func awakeFromNib() {
-    let flutterViewController = FlutterViewController()
-    let windowFrame = self.frame
-    self.contentViewController = flutterViewController
-    self.setFrame(windowFrame, display: true)
+  private var wallpaperChannel: FlutterMethodChannel?
 
-    // Set up the method channel
-    
-    let wallpaperChannel = FlutterMethodChannel(name: "comfer.jeerovan.com/wallpaper",
-                                            binaryMessenger: flutterViewController.engine.binaryMessenger)
-    wallpaperChannel.setMethodCallHandler { (call, result) in
-      if call.method == "setWallpaper" {
-        if let args = call.arguments as? [String: Any],
-            let path = args["path"] as? String {
-          let success = self.setWallpaper(at: path)
-          result(success)
-        } else {
-          result(FlutterError(code: "INVALID_ARGUMENTS",
-                              message: "Missing path argument",
-                              details: nil))
+  override func awakeFromNib() {
+    let commands = ["--enable-startup", "--disable-startup", "--startup-status"]
+    if ProcessInfo.processInfo.arguments.contains(where: { commands.contains($0) }) {
+      super.awakeFromNib()
+      return
+    }
+    let project = FlutterDartProject()
+    project.dartEntrypointArguments = Array(ProcessInfo.processInfo.arguments.dropFirst())
+    let engine = FlutterEngine(name: "comfer-background", project: project, allowHeadlessExecution: true)
+    let controller = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
+    contentViewController = controller
+    setFrame(frame, display: false)
+    wallpaperChannel = FlutterMethodChannel(
+      name: "comfer.jeerovan.com/wallpaper", binaryMessenger: controller.engine.binaryMessenger)
+    wallpaperChannel?.setMethodCallHandler { call, result in
+      switch call.method {
+      case "getWallpaperPaths":
+        guard !NSScreen.screens.isEmpty else {
+          result(FlutterError(code: "NO_DISPLAY", message: "No desktop display is available", details: nil))
+          return
         }
-      } else {
+        result(NSScreen.screens.compactMap { NSWorkspace.shared.desktopImageURL(for: $0)?.path })
+      case "setWallpaper":
+        guard let args = call.arguments as? [String: Any], let path = args["path"] as? String,
+              let screen = NSScreen.screens.first else {
+          result(FlutterError(code: "INVALID_ARGUMENTS", message: "Missing image or desktop display", details: nil))
+          return
+        }
+        do {
+          try NSWorkspace.shared.setDesktopImageURL(URL(fileURLWithPath: path), for: screen, options: [:])
+          result(true)
+        } catch {
+          result(FlutterError(code: "APPLY_FAILED", message: error.localizedDescription, details: nil))
+        }
+      default:
         result(FlutterMethodNotImplemented)
       }
     }
-
-    RegisterGeneratedPlugins(registry: flutterViewController)
-
+    RegisterGeneratedPlugins(registry: controller)
+    engine.run(withEntrypoint: nil)
     super.awakeFromNib()
-  }
-
-  // Method to set wallpaper
-  func setWallpaper(at path: String) -> Bool {
-    let workspace = NSWorkspace.shared
-    let screen = NSScreen.main!
-    let fileURL = URL(fileURLWithPath: path)
-
-    do {
-      try workspace.setDesktopImageURL(fileURL, for: screen, options: [:])
-      return true
-    } catch {
-      print("Error setting wallpaper: \(error)")
-      return false
-    }
+    orderOut(nil)
   }
 }

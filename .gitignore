@@ -11,6 +11,7 @@
 .history
 .svn/
 .swiftpm/
+.codex/
 migrate_working_dir/
 
 # IntelliJ related
@@ -47,3 +48,8 @@ app.*.map.json
 
 #XCode
 Podfile
+
+*.md
+!README.md
+!LICENSE.md
+!/macos/Podfile

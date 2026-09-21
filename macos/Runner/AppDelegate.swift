@@ -1,33 +1,44 @@
 import Cocoa
 import FlutterMacOS
+import ServiceManagement
 
 @main
-class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
-  var mainWindow: NSWindow?  // Keep a reference to main window
-  private var methodChannel: FlutterMethodChannel?
-
+class AppDelegate: FlutterAppDelegate {
   override func applicationDidFinishLaunching(_ notification: Notification) {
-    super.applicationDidFinishLaunching(notification)
-
-    // Capture main window pointer
-    if let window = NSApplication.shared.windows.first {
-      mainWindow = window
-      mainWindow?.delegate = self
+    // Installer operations are explicit. Normal launches never re-enable a
+    // login item the user disabled in System Settings.
+    let arguments = ProcessInfo.processInfo.arguments
+    if arguments.contains("--enable-startup") || arguments.contains("--disable-startup") {
+      do {
+        if arguments.contains("--enable-startup") {
+          if SMAppService.mainApp.status == .notRegistered || SMAppService.mainApp.status == .notFound {
+            try SMAppService.mainApp.register()
+          }
+          guard SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval else {
+            fputs("Login registration did not become available.\n", stderr)
+            exit(1)
+          }
+        } else {
+          if SMAppService.mainApp.status != .notRegistered && SMAppService.mainApp.status != .notFound {
+            try SMAppService.mainApp.unregister()
+          }
+        }
+        print("Login startup status: \(SMAppService.mainApp.status.rawValue)")
+        exit(0)
+      } catch {
+        fputs("Login startup failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+      }
     }
-  
+    if arguments.contains("--startup-status") {
+      print("\(SMAppService.mainApp.status.rawValue)")
+      exit(0)
+    }
+    super.applicationDidFinishLaunching(notification)
+    NSApp.setActivationPolicy(.accessory)
+    mainFlutterWindow?.orderOut(nil)
   }
 
-  // Intercept window close on macOS, hide instead of close
-  func windowShouldClose(_ sender: NSWindow) -> Bool {
-    sender.orderOut(nil)  // Hide window
-    return false          // Prevent closing
-  }
-  
-  override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    return false
-  }
-
-  override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
-    return true
-  }
+  override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+  override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 }

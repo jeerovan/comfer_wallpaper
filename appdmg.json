@@ -1,26 +1,10 @@
 {
-  "title": "NoteSafe",
-  "icon": "assets/Icon.icns",
-  "background": "assets/dmg_background.png",
-  "window": {
-    "size": {
-      "width": 800,
-      "height": 400
-    }
-  },
+  "title": "Comfer Wallpaper",
+  "icon": "AppIcon.icns",
+  "background": "dmg_background.png",
+  "window": { "size": { "width": 800, "height": 400 } },
   "contents": [
-    {
-      "x": 180,
-      "y": 260,
-      "type": "file",
-      "path": "dist/NoteSafe.app"
-    },
-    {
-      "x": 590,
-      "y": 260,
-      "type": "link",
-      "path": "/Applications"
-    }
+    { "x": 180, "y": 260, "type": "file", "path": "build/macos/Build/Products/Release/Comfer Wallpaper.app" },
+    { "x": 590, "y": 260, "type": "link", "path": "/Applications" }
   ]
 }
-
