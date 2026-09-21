@@ -270,6 +270,17 @@ flutter build windows --release
 
 The Windows CMake install step copies the five supplied x64 Visual C++ runtime DLLs from `windows/dlls/` beside `comfer_wallpaper.exe` for Release and Profile builds. Keep those files in the source checkout. Debug builds use the development toolchain runtime; ARM64 builds do not receive these x64 DLLs. Both the PowerShell installer and `exe.iss` include the resulting release-folder DLLs automatically.
 
+To create the distributable installer with Inno Setup 6:
+
+```powershell
+flutter build windows --release
+& 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' exe.iss
+```
+
+The output is `Output/ComferWallpaper-<version>-windows-x64-setup.exe`. Version metadata comes from the built executable. Compilation rejects missing Flutter release files or bundled runtime DLLs. The installer runs per user without elevation, offers login startup and an optional desktop shortcut, and waits up to 15 seconds for graceful shutdown before upgrade/uninstall. If shutdown fails, it stops without replacing/removing application files. Existing startup choices, including a removed Run entry or Windows-disabled startup, are preserved on upgrades. Uninstall removes installed files and its login entry while keeping wallpaper data/preferences. Setup logs are enabled; `/LOG="path\setup.log"` selects a log path.
+
+Use one packaging method. The Inno installer blocks an existing machine-wide `ComferWalls` installation or the PowerShell installer's registration; uninstall that older package first to avoid competing uninstall entries. Installer compilation and its missing-runtime guard have been verified. Real install/upgrade/uninstall, startup after login and older-package migration still need smoke tests before distribution. The per-user setting follows [Inno Setup's documented privilege model](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm).
+
 The per-user PowerShell installer copies the complete release bundle into `%LOCALAPPDATA%\Programs\ComferWallpaper`, registers a quoted `--background` command in the user's Run key, and adds **Comfer Wallpaper** to Windows Installed Apps. No administrator privileges are required. `-Source` selects another release bundle; `-NoLaunch` installs without starting it. Keep the entire bundle together when distributing it. This is an interactive signed-in-user application, not a Windows system service.
 
 Disable automatic startup through Windows Settings → Apps → Startup. Upgrades preserve Windows' disabled startup state and do not recreate a manually removed Run entry. Intentional Quit leaves login registration intact and never immediately restarts the process. Both mouse buttons open the notification icon's menu; failures are available through **Last change needs attention…**.
